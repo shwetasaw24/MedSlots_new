@@ -130,7 +130,7 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
           }else{
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => PatientProfileScreen(name: "",address: "",contactNumber: ""))
+              MaterialPageRoute(builder: (context) => PatientProfileScreen(name: "",address: "",contactNumber: "",age: index,gender: '',email: '',bloodGroup: ''))
             );
 
           }

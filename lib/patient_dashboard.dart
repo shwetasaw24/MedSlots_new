@@ -148,11 +148,19 @@ class PatientDashboard extends StatelessWidget {
           } else if (index == 2) {
             Navigator.push(
               context,
+              // MaterialPageRoute(builder: (context) => PatientProfileScreen(name: "",address: "",contactNumber: "",age: index,gender: '',email: '',bloodGroup: ''))
+
               MaterialPageRoute(builder: (context) => PatientProfileScreen(
                 name: "John Doe", 
                 address: "123 Street, City", 
-                contactNumber: "+91 9876543210"
-              )),
+                contactNumber: "+91 9876543210",
+                age: 25,
+                gender: 'male',
+                email: 'abc@gmail.com',
+                bloodGroup: 'O+',
+
+              )
+              ),
             );
           }
         },
@@ -280,6 +288,18 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDropdown(String label, List<String> items, String value, ValueChanged<String?> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 15),
+      child: DropdownButtonFormField<String>(
+        value: items.contains(value) ? value : items.first,
+        decoration: InputDecoration(labelText: label, border: OutlineInputBorder()),
+        items: items.toSet().map((String item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
+        onChanged: onChanged,
       ),
     );
   }
