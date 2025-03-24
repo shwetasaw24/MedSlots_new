@@ -43,7 +43,7 @@ class WelcomeScreen extends StatelessWidget {
               SizedBox(height: screenHeight * 0.05),
               
               Text(
-                'Welcome to MedSlots',
+                'MedSlots',
                 style: TextStyle(
                   fontSize: screenWidth * 0.07, 
                   fontWeight: FontWeight.bold,

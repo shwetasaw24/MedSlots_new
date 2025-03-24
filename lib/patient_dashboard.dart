@@ -151,14 +151,14 @@ class PatientDashboard extends StatelessWidget {
               // MaterialPageRoute(builder: (context) => PatientProfileScreen(name: "",address: "",contactNumber: "",age: index,gender: '',email: '',bloodGroup: ''))
 
               MaterialPageRoute(builder: (context) => PatientProfileScreen(
-                name: "John Doe", 
-                address: "123 Street, City", 
+                name: "John Doe",
+                address: "123 Street, City",
                 contactNumber: "+91 9876543210",
                 age: 25,
-                gender: 'male',
-                email: 'abc@gmail.com',
-                bloodGroup: 'O+',
-
+                gender: "Male",
+                email: "johndoe@example.com",
+                bloodGroup: "O+",
+                
               )
               ),
             );
