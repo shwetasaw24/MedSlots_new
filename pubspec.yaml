@@ -41,6 +41,11 @@ dependencies:
   firebase_core: ^3.12.1
   firebase_auth: ^5.5.1
   intl: ^0.20.2
+  cloud_firestore: ^5.6.5
+  firebase_storage: ^12.4.5
+  file_picker: ^10.0.0
+  cached_network_image: ^3.4.1
+  flutter_datetime_picker: ^1.5.1
   # init1: latest_version
   # firebase_storage: ^12.4.4
   # firebase_core: ^3.12.1
@@ -48,7 +53,6 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  file_picker: ^8.0.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

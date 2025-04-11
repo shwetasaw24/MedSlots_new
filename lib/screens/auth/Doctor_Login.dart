@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'screens/doctor_dashboard.dart';
-import 'doctor_signup_screen.dart';  // Import Sign Up screen for navigation
+import '../doctor/doctor_dashboard.dart';
+import '../auth/doctor_signup_screen.dart';  // Import Sign Up screen for navigation
 
 class DoctorLoginScreen extends StatelessWidget {
   @override
