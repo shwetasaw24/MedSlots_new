@@ -579,7 +579,7 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                 context,
                 MaterialPageRoute(
                   builder: (context) => PatientProfileScreen(
-                    email: currentUser.email!,
+                    // email: currentUser.email!,
                   ),
                 ),
               );

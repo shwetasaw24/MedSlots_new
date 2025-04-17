@@ -42,9 +42,13 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
   
   // Available time slots based on date
   List<String> availableTimeSlots = [];
-  Map<String, Map<String, bool>> slotAvailability = {
-    'Today': {},
-    'Tomorrow': {},
+  Map<String, List<String>> allTimeSlots = {
+    'Today': [],
+    'Tomorrow': [],
+  };
+  Map<String, List<String>> bookedTimeSlots = {
+    'Today': [],
+    'Tomorrow': [],
   };
 
   @override
@@ -66,20 +70,13 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       String todayFormatted = DateFormat('yyyy-MM-dd').format(today);
       String tomorrowFormatted = DateFormat('yyyy-MM-dd').format(tomorrow);
       
-      // Generate all potential 15-minute slots
-      Map<String, List<String>> dayAvailability = await _getDoctorAvailability();
+      // Get doctor's regular availability and generate time slots
+      await _fetchDoctorAvailability();
       
       // Get already booked appointments for both days
-      Map<String, List<String>> bookedSlots = await _getBookedTimeSlots(todayFormatted, tomorrowFormatted);
+      await _fetchBookedAppointments(todayFormatted, tomorrowFormatted);
       
-      // Remove booked slots from available slots
-      for (var date in ['Today', 'Tomorrow']) {
-        for (var slot in dayAvailability[date] ?? []) {
-          slotAvailability[date]![slot] = !(bookedSlots[date]?.contains(slot) ?? false);
-        }
-      }
-      
-      // Set available time slots for the initially selected date
+      // Update available time slots based on initial selection
       _updateAvailableTimeSlots();
     } catch (e) {
       print("Error loading doctor availability: $e");
@@ -95,39 +92,57 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
     }
   }
 
-  // Get doctor's availability hours and generate 15-min slots
-  Future<Map<String, List<String>>> _getDoctorAvailability() async {
-    Map<String, List<String>> result = {
-      'Today': [],
-      'Tomorrow': [],
-    };
-    
+  // Fetch doctor's availability schedule from Firestore
+  Future<void> _fetchDoctorAvailability() async {
     try {
-      // Get availability data from Firestore for the doctor
+      // Try to get availability data from Firestore using doctor's name
       Map<String, dynamic>? availabilityData = await _firebaseServices.getDoctorAvailability(widget.doctorName);
       
-      if (availabilityData != null) {
+      if (availabilityData != null && availabilityData.isNotEmpty) {
+        // Process today's availability
         DateTime today = DateTime.now();
         String dayOfWeek = DateFormat('EEEE').format(today).toLowerCase();
-        String tomorrowDayOfWeek = DateFormat('EEEE').format(today.add(Duration(days: 1))).toLowerCase();
+        String todayAvailability = '';
         
-        // Process today's availability
-        String todayAvailability = availabilityData['currentAvailability'] ?? '';
-        if (todayAvailability.isNotEmpty) {
-          result['Today'] = _generateTimeSlots(todayAvailability);
+        // Check current day availability
+        if (availabilityData.containsKey(dayOfWeek)) {
+          todayAvailability = availabilityData[dayOfWeek];
+        } else if (availabilityData.containsKey('currentAvailability')) {
+          todayAvailability = availabilityData['currentAvailability'];
+        } else {
+          // Use the availability from widget if no specific data found
+          todayAvailability = widget.availability;
         }
         
         // Process tomorrow's availability
-        String tomorrowAvailability = availabilityData['tomorrowsAvailability'] ?? '';
-        if (tomorrowAvailability.isNotEmpty) {
-          result['Tomorrow'] = _generateTimeSlots(tomorrowAvailability);
+        DateTime tomorrow = today.add(Duration(days: 1));
+        String tomorrowDayOfWeek = DateFormat('EEEE').format(tomorrow).toLowerCase();
+        String tomorrowAvailability = '';
+        
+        // Check tomorrow's day availability
+        if (availabilityData.containsKey(tomorrowDayOfWeek)) {
+          tomorrowAvailability = availabilityData[tomorrowDayOfWeek];
+        } else if (availabilityData.containsKey('tomorrowsAvailability')) {
+          tomorrowAvailability = availabilityData['tomorrowsAvailability'];
+        } else {
+          // Use the same availability as today if no specific data found
+          tomorrowAvailability = todayAvailability;
         }
+        
+        // Generate time slots from availability strings
+        allTimeSlots['Today'] = _generateTimeSlots(todayAvailability);
+        allTimeSlots['Tomorrow'] = _generateTimeSlots(tomorrowAvailability);
+      } else {
+        // Fallback to using the availability from the widget
+        allTimeSlots['Today'] = _generateTimeSlots(widget.availability);
+        allTimeSlots['Tomorrow'] = _generateTimeSlots(widget.availability);
       }
     } catch (e) {
       print("Error fetching doctor availability: $e");
+      // Fallback to using the availability from the widget
+      allTimeSlots['Today'] = _generateTimeSlots(widget.availability);
+      allTimeSlots['Tomorrow'] = _generateTimeSlots(widget.availability);
     }
-    
-    return result;
   }
   
   // Generate 15-minute time slots from availability string
@@ -153,19 +168,36 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
         }
       } catch (e) {
         print("Error parsing time: $e");
+        // If parsing fails, try with different format pattern
+        try {
+          // Try a different format if the first one fails
+          DateTime startTime = DateFormat('hh:mm a').parse(parts[0]);
+          DateTime endTime = DateFormat('hh:mm a').parse(parts[1]);
+          
+          // Generate slots in 15-minute intervals
+          DateTime currentSlot = startTime;
+          while (currentSlot.isBefore(endTime)) {
+            DateTime slotEnd = currentSlot.add(Duration(minutes: 15));
+            if (!slotEnd.isAfter(endTime)) {
+              String slot = "${DateFormat('h:mm a').format(currentSlot)} - ${DateFormat('h:mm a').format(slotEnd)}";
+              slots.add(slot);
+            }
+            currentSlot = slotEnd;
+          }
+        } catch (innerE) {
+          print("Error parsing time with alternate format: $innerE");
+        }
       }
+    } else {
+      // Handle if availability string is not in expected format
+      print("Availability string not in expected format: $availabilityString");
     }
     
     return slots;
   }
   
   // Get already booked time slots
-  Future<Map<String, List<String>>> _getBookedTimeSlots(String todayDate, String tomorrowDate) async {
-    Map<String, List<String>> bookedSlots = {
-      'Today': [],
-      'Tomorrow': [],
-    };
-    
+  Future<void> _fetchBookedAppointments(String todayDate, String tomorrowDate) async {
     try {
       // Get bookings for today
       List<Map<String, dynamic>> todayBookings = await _firebaseServices.getBookedAppointments(
@@ -179,31 +211,29 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
         tomorrowDate
       );
       
-      for (var booking in todayBookings) {
-        bookedSlots['Today']!.add(booking['TimeSlot']);
-      }
-      
-      for (var booking in tomorrowBookings) {
-        bookedSlots['Tomorrow']!.add(booking['TimeSlot']);
-      }
+      setState(() {
+        bookedTimeSlots['Today'] = todayBookings.map((booking) => booking['TimeSlot'] as String).toList();
+        bookedTimeSlots['Tomorrow'] = tomorrowBookings.map((booking) => booking['TimeSlot'] as String).toList();
+      });
     } catch (e) {
       print("Error fetching booked appointments: $e");
+      // Initialize with empty lists if there's an error
+      bookedTimeSlots['Today'] = [];
+      bookedTimeSlots['Tomorrow'] = [];
     }
-    
-    return bookedSlots;
   }
   
   // Update available time slots based on selected date
   void _updateAvailableTimeSlots() {
     setState(() {
-      availableTimeSlots = [];
+      // Get all time slots for the selected date
+      List<String> allSlots = allTimeSlots[selectedDateOption] ?? [];
       
-      // Get slots for selected date option that are available (not booked)
-      slotAvailability[selectedDateOption]?.forEach((slot, isAvailable) {
-        if (isAvailable) {
-          availableTimeSlots.add(slot);
-        }
-      });
+      // Get booked slots for the selected date
+      List<String> bookedSlots = bookedTimeSlots[selectedDateOption] ?? [];
+      
+      // Filter out booked slots
+      availableTimeSlots = allSlots.where((slot) => !bookedSlots.contains(slot)).toList();
       
       // Clear selected slot if it's no longer available
       if (selectedTimeSlot != null && !availableTimeSlots.contains(selectedTimeSlot)) {
@@ -212,9 +242,13 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       
       // Sort time slots chronologically
       availableTimeSlots.sort((a, b) {
-        DateTime timeA = DateFormat('h:mm a').parse(a.split(' - ')[0]);
-        DateTime timeB = DateFormat('h:mm a').parse(b.split(' - ')[0]);
-        return timeA.compareTo(timeB);
+        try {
+          DateTime timeA = DateFormat('h:mm a').parse(a.split(' - ')[0]);
+          DateTime timeB = DateFormat('h:mm a').parse(b.split(' - ')[0]);
+          return timeA.compareTo(timeB);
+        } catch (e) {
+          return 0;
+        }
       });
     });
   }
@@ -223,6 +257,17 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
     if (widget.patientEmail == null || widget.patientEmail!.isEmpty) {
       Fluttertoast.showToast(
         msg: "Please login to book an appointment",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+    
+    if (selectedTimeSlot == null) {
+      Fluttertoast.showToast(
+        msg: "Please select a time slot",
         toastLength: Toast.LENGTH_SHORT,
         gravity: ToastGravity.BOTTOM,
         backgroundColor: Colors.red,
@@ -258,6 +303,12 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       
       // Save to Firestore
       await _firebaseServices.bookAppointment(widget.patientEmail!, appointmentData);
+      
+      // Add the booked slot to our local list to prevent double booking
+      setState(() {
+        bookedTimeSlots[selectedDateOption]!.add(selectedTimeSlot!);
+        _updateAvailableTimeSlots();
+      });
       
       // Save latest booking to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
@@ -389,12 +440,47 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                   
                   SizedBox(height: 20),
                   
+                  // Show availability status for today and tomorrow
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          "Available Time Slots",
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal.shade800),
+                        ),
+                        Text(
+                          "${availableTimeSlots.length} slots available",
+                          style: TextStyle(fontSize: 14, color: Colors.teal),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  SizedBox(height: 20),
+                  
                   // Available time slots grid
                   availableTimeSlots.isEmpty
-                    ? Center(
-                        child: Text(
-                          "No available time slots for ${selectedDateOption.toLowerCase()}",
-                          style: TextStyle(fontSize: 16, color: Colors.red),
+                    ? Container(
+                        padding: EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.event_busy, color: Colors.red, size: 40),
+                            SizedBox(height: 10),
+                            Text(
+                              "No available time slots for ${selectedDateOption.toLowerCase()}",
+                              style: TextStyle(fontSize: 16, color: Colors.red.shade800),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
                         ),
                       )
                     : GridView.builder(
@@ -425,6 +511,14 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                                   color: isSelected ? Colors.teal.shade800 : Colors.transparent,
                                   width: 2,
                                 ),
+                                boxShadow: isSelected ? [
+                                  BoxShadow(
+                                    color: Colors.teal.withOpacity(0.3),
+                                    spreadRadius: 1,
+                                    blurRadius: 3,
+                                    offset: Offset(0, 2),
+                                  )
+                                ] : null,
                               ),
                               child: Center(
                                 child: Text(
@@ -443,7 +537,15 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                   SizedBox(height: 30),
                   
                   isBooking 
-                    ? CircularProgressIndicator(color: Colors.teal)
+                    ? Center(
+                        child: Column(
+                          children: [
+                            CircularProgressIndicator(color: Colors.teal),
+                            SizedBox(height: 10),
+                            Text("Booking your appointment...", style: TextStyle(color: Colors.teal)),
+                          ],
+                        )
+                      )
                     : ElevatedButton(
                         onPressed: selectedTimeSlot == null
                             ? null
@@ -452,6 +554,10 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                           backgroundColor: Colors.teal,
                           padding: EdgeInsets.symmetric(horizontal: 50, vertical: 15),
                           disabledBackgroundColor: Colors.grey,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          elevation: 3,
                         ),
                         child: Text("Book Appointment", style: TextStyle(fontSize: 18, color: Colors.white)),
                       ),

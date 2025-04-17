@@ -419,6 +419,7 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     super.dispose();
   }
   
+  
   Future<void> _loadDoctorProfile() async {
     try {
       // Use the provided doctor data
@@ -448,6 +449,8 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       print("Error loading doctor profile: $e");
     }
   }
+
+  
 
   Future<void> _loadSavedData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();

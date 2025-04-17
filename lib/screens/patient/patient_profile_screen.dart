@@ -5,14 +5,9 @@ import 'patient_dashboard.dart';
 import 'upload_report.dart';
 
 class PatientProfileScreen extends StatefulWidget {
-  // Instead of passing all these details as parameters,
-  // we'll fetch them from Firebase using the user's email
-  final String email;
-
-  PatientProfileScreen({
-    required this.email,
-  });
-
+  // We'll fetch data using the current authenticated user
+  // No need to pass email as parameter anymore
+  
   @override
   _PatientProfileScreenState createState() => _PatientProfileScreenState();
 }
@@ -27,6 +22,8 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   
   String _selectedGender = '';
   String _selectedBloodGroup = '';
+  String _userId = ''; // Store current user ID
+  String _userEmail = ''; // Store current user email
 
   // Appointment details
   String _clinicName = "";
@@ -47,15 +44,38 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     _addressController = TextEditingController();
     _ageController = TextEditingController();
     _contactNumberController = TextEditingController();
-    _emailController = TextEditingController(text: widget.email); // Email is known
+    _emailController = TextEditingController();
     
     // Initialize with default values to prevent dropdown errors
     _selectedGender = genderOptions[0];
     _selectedBloodGroup = bloodGroups[0];
 
-    // Fetch user data when screen initializes
-    fetchUserData();
-    fetchAppointmentDetails();
+    // Get current user and fetch data
+    getCurrentUser();
+  }
+
+  // Get current authenticated user
+  Future<void> getCurrentUser() async {
+    User? currentUser = FirebaseAuth.instance.currentUser;
+    
+    if (currentUser != null) {
+      setState(() {
+        _userId = currentUser.uid;
+        _userEmail = currentUser.email ?? '';
+        _emailController.text = _userEmail;
+      });
+      
+      // Now that we have the user ID, fetch the profile data
+      await fetchUserData();
+      await fetchAppointmentDetails();
+    } else {
+      // User not logged in, handle this case (e.g., navigate to login)
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('User not authenticated. Please login again.'))
+      );
+      // Navigate back to login screen
+      // You can add navigation code here
+    }
   }
 
   // Fetch user data from Firestore
@@ -65,22 +85,23 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     });
     
     try {
-      String userId = widget.email; // Using email as user ID
-      
+      // First try to fetch from 'patients' collection (as used in registration)
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('Patient')
-          .doc(userId)
+          .collection('patients')
+          .doc(_userId)
           .get();
       
       if (userDoc.exists) {
         Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
         
         setState(() {
-          // Update all text controllers with the retrieved data
-          _nameController.text = userData['name'] ?? '';
+          // Update text controllers with data from registration
+          _nameController.text = userData['fullName'] ?? '';
+          _contactNumberController.text = userData['contactNumber'] ?? '';
+          
+          // These fields may not exist in a new user profile
           _addressController.text = userData['address'] ?? '';
           _ageController.text = (userData['age'] ?? '').toString();
-          _contactNumberController.text = userData['contactNumber'] ?? '';
           
           // Make sure gender exists in our options
           String fetchedGender = userData['gender'] ?? '';
@@ -91,10 +112,35 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
           _selectedBloodGroup = bloodGroups.contains(fetchedBloodGroup) ? fetchedBloodGroup : bloodGroups[0];
         });
       } else {
-        print("User document does not exist in Firestore");
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('User profile not found. Please contact support.'))
-        );
+        // If not found in 'patients', try the 'Patient' collection
+        // This is a fallback for existing users who might have data in the old path
+        userDoc = await FirebaseFirestore.instance
+            .collection('Patient')
+            .doc(_userEmail)
+            .get();
+            
+        if (userDoc.exists) {
+          Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+          
+          setState(() {
+            _nameController.text = userData['name'] ?? '';
+            _addressController.text = userData['address'] ?? '';
+            _ageController.text = (userData['age'] ?? '').toString();
+            _contactNumberController.text = userData['contactNumber'] ?? '';
+            
+            String fetchedGender = userData['gender'] ?? '';
+            _selectedGender = genderOptions.contains(fetchedGender) ? fetchedGender : genderOptions[0];
+            
+            String fetchedBloodGroup = userData['bloodGroup'] ?? '';
+            _selectedBloodGroup = bloodGroups.contains(fetchedBloodGroup) ? fetchedBloodGroup : bloodGroups[0];
+          });
+        } else {
+          print("User document does not exist in Firestore");
+          // Create empty profile for new users
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('New profile created. Please add your details.'))
+          );
+        }
       }
     } catch (e) {
       print("Error fetching user data: $e");
@@ -110,45 +156,65 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
 
   Future<void> fetchAppointmentDetails() async {
     try {
-      String userId = widget.email; // Using email as user ID
-
-      // First try to get the appointment document directly
-      DocumentSnapshot appointmentDoc = await FirebaseFirestore.instance
-          .collection('Patient')
-          .doc(userId)
-          .collection('Bookings')
-          .doc('Appointment')
+      // First try 'patients' collection path (new structure)
+      QuerySnapshot appointmentQuery = await FirebaseFirestore.instance
+          .collection('patients')
+          .doc(_userId)
+          .collection('appointments')
+          .where('status', isNotEqualTo: 'cancelled')
+          .orderBy('status')
+          .orderBy('createdAt', descending: true)
+          .limit(1)
           .get();
-          
-      if (appointmentDoc.exists) {
-        var appointmentData = appointmentDoc.data() as Map<String, dynamic>;
+
+      if (appointmentQuery.docs.isNotEmpty) {
+        var appointmentData = appointmentQuery.docs.first.data() as Map<String, dynamic>;
         
         setState(() {
-          _clinicName = appointmentData['ClinicsName'] ?? "";
-          _status = appointmentData['Status'] ?? "";
-          _timeSlot = appointmentData['TimeSlot'] ?? "";
-          _date = appointmentData['date'] ?? "";
+          _clinicName = appointmentData['clinicName'] ?? "";
+          _status = appointmentData['status'] ?? "";
+          _timeSlot = appointmentData['timeSlot'] ?? "";
+          _date = appointmentData['date'] ?? _formatDate(appointmentData['appointmentDate']);
         });
       } else {
-        // If direct document doesn't exist, try to query for appointments
-        QuerySnapshot appointmentQuery = await FirebaseFirestore.instance
+        // Try the old path structure with email as ID
+        DocumentSnapshot appointmentDoc = await FirebaseFirestore.instance
             .collection('Patient')
-            .doc(userId)
+            .doc(_userEmail)
             .collection('Bookings')
-            .where('status', isEqualTo: true)
-            .orderBy('Date', descending: true)
-            .limit(1)
+            .doc('Appointment')
             .get();
-
-        if (appointmentQuery.docs.isNotEmpty) {
-          var appointmentData = appointmentQuery.docs.first.data() as Map<String, dynamic>;
+            
+        if (appointmentDoc.exists) {
+          var appointmentData = appointmentDoc.data() as Map<String, dynamic>;
           
           setState(() {
-            _clinicName = appointmentData['Clinics Name'] ?? appointmentData['ClinicsName'] ?? "";
-            _status = appointmentData['Status'] ?? (appointmentData['status'] == true ? "Confirmed" : "Pending");
-            _timeSlot = appointmentData['TimeSlot'] ?? appointmentData['Booking Time'] ?? "";
-            _date = appointmentData['date'] ?? _formatTimestamp(appointmentData['Date']) ?? "";
+            _clinicName = appointmentData['ClinicsName'] ?? "";
+            _status = appointmentData['Status'] ?? "";
+            _timeSlot = appointmentData['TimeSlot'] ?? "";
+            _date = appointmentData['date'] ?? "";
           });
+        } else {
+          // Try one more structure variation
+          QuerySnapshot oldAppointmentQuery = await FirebaseFirestore.instance
+              .collection('Patient')
+              .doc(_userEmail)
+              .collection('Bookings')
+              .where('status', isEqualTo: true)
+              .orderBy('Date', descending: true)
+              .limit(1)
+              .get();
+
+          if (oldAppointmentQuery.docs.isNotEmpty) {
+            var appointmentData = oldAppointmentQuery.docs.first.data() as Map<String, dynamic>;
+            
+            setState(() {
+              _clinicName = appointmentData['Clinics Name'] ?? appointmentData['ClinicsName'] ?? "";
+              _status = appointmentData['Status'] ?? (appointmentData['status'] == true ? "Confirmed" : "Pending");
+              _timeSlot = appointmentData['TimeSlot'] ?? appointmentData['Booking Time'] ?? "";
+              _date = appointmentData['date'] ?? _formatTimestamp(appointmentData['Date']) ?? "";
+            });
+          }
         }
       }
     } catch (e) {
@@ -165,6 +231,18 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     }
     return timestamp.toString();
   }
+  
+  // Helper method to format DateTime
+  String _formatDate(dynamic date) {
+    if (date == null) return "";
+    if (date is DateTime) {
+      return "${date.day}/${date.month}/${date.year}";
+    } else if (date is Timestamp) {
+      DateTime dateTime = date.toDate();
+      return "${dateTime.day}/${dateTime.month}/${dateTime.year}";
+    }
+    return date.toString();
+  }
 
   Future<void> saveChanges() async {
     setState(() {
@@ -172,21 +250,30 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     });
     
     try {
-      String userId = widget.email;
+      // Prepare the data to update
+      Map<String, dynamic> updateData = {
+        'fullName': _nameController.text,
+        'name': _nameController.text, // Add both keys for compatibility
+        'address': _addressController.text,
+        'age': int.tryParse(_ageController.text) ?? 0,
+        'gender': _selectedGender,
+        'bloodGroup': _selectedBloodGroup,
+        'contactNumber': _contactNumberController.text,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
       
-      // Update user data in Firestore
+      // Update in both possible locations for compatibility
+      // 1. Update in 'patients' collection with UID as document ID
+      await FirebaseFirestore.instance
+          .collection('patients')
+          .doc(_userId)
+          .set(updateData, SetOptions(merge: true));
+      
+      // 2. Update in 'Patient' collection with email as document ID for backwards compatibility
       await FirebaseFirestore.instance
           .collection('Patient')
-          .doc(userId)
-          .update({
-            'name': _nameController.text,
-            'address': _addressController.text,
-            'age': int.tryParse(_ageController.text) ?? 0,
-            'gender': _selectedGender,
-            'bloodGroup': _selectedBloodGroup,
-            'contactNumber': _contactNumberController.text,
-            // Don't update email and contactNumber as they are identity fields
-          });
+          .doc(_userEmail)
+          .set(updateData, SetOptions(merge: true));
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Profile updated successfully!'))
@@ -239,7 +326,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                   TextField(
                     controller: _nameController,
                     decoration: InputDecoration(
-                      labelText: 'Name',
+                      labelText: 'Full Name',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -325,6 +412,19 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                     ),
                   ),
                   SizedBox(height: 15),
+                  TextField(
+                    controller: _contactNumberController,
+                    keyboardType: TextInputType.phone,
+                    decoration: InputDecoration(
+                      labelText: 'Contact Number',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 15),
                   Container(
                     padding: EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -342,7 +442,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Contact Info:',
+                          'Email Address:',
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -352,25 +452,11 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                         SizedBox(height: 10),
                         Row(
                           children: [
-                            Icon(Icons.phone, color: Colors.teal),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Contact No: ${_contactNumberController.text}',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: 8),
-                        Row(
-                          children: [
                             Icon(Icons.email, color: Colors.teal),
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Email: ${_emailController.text}',
+                                _userEmail,
                                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -460,5 +546,16 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         },
       ),
     );
+  }
+  
+  @override
+  void dispose() {
+    // Dispose controllers to prevent memory leaks
+    _nameController.dispose();
+    _addressController.dispose();
+    _ageController.dispose();
+    _contactNumberController.dispose();
+    _emailController.dispose();
+    super.dispose();
   }
 }

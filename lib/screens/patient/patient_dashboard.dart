@@ -329,7 +329,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
               context,
               MaterialPageRoute(
                 builder: (context) => PatientProfileScreen(
-                  email: widget.patientEmail ?? "",
+                  // email: widget.patientEmail ?? "",
                 ),
               ),
             );
