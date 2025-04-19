@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Add this import
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../doctor/doctor_dashboard.dart';
-import 'doctor_login.dart';
+import 'doctor_login.dart';  // Correct import path for login screen
 
 class DoctorSignUpScreen extends StatefulWidget {
   @override
@@ -11,24 +11,64 @@ class DoctorSignUpScreen extends StatefulWidget {
 
 class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // Add Firestore instance
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TextEditingController emailController = TextEditingController();
+  final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController fullNameController = TextEditingController();
   final TextEditingController clinicNameController = TextEditingController();
   final TextEditingController locationController = TextEditingController();
-  final TextEditingController usernameController = TextEditingController();
+
+  // Availability as strings, to match the profile screen format
+  String todayAvailability = "9:00 AM - 5:00 PM";
+  String tomorrowAvailability = "9:00 AM - 5:00 PM";
 
   bool isLoading = false;
   String errorMessage = '';
 
+  Future<void> _updateAvailability(bool isToday) async {
+    TimeOfDay? startTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: 9, minute: 0),
+    );
+    
+    if (startTime != null) {
+      TimeOfDay? endTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay(hour: 17, minute: 0),
+      );
+      
+      if (endTime != null) {
+        setState(() {
+          // Format the time in a way that matches the profile screen
+          String formattedStartTime = _formatTimeOfDay(startTime);
+          String formattedEndTime = _formatTimeOfDay(endTime);
+          String availabilityString = "$formattedStartTime - $formattedEndTime";
+          
+          if (isToday) {
+            todayAvailability = availabilityString;
+          } else {
+            tomorrowAvailability = availabilityString;
+          }
+        });
+      }
+    }
+  }
+
+  String _formatTimeOfDay(TimeOfDay tod) {
+    final hours = tod.hourOfPeriod == 0 ? 12 : tod.hourOfPeriod;
+    final minutes = tod.minute.toString().padLeft(2, '0');
+    final period = tod.period == DayPeriod.am ? 'AM' : 'PM';
+    return "$hours:$minutes $period";
+  }
+
   Future<void> _registerDoctor() async {
     if (emailController.text.isEmpty ||
+        phoneController.text.isEmpty ||
         passwordController.text.isEmpty ||
         fullNameController.text.isEmpty ||
         clinicNameController.text.isEmpty ||
-        locationController.text.isEmpty ||
-        usernameController.text.isEmpty) {
+        locationController.text.isEmpty) {
       setState(() {
         errorMessage = "All fields are required!";
       });
@@ -53,10 +93,12 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
         await _firestore.collection('doctors').doc(userCredential.user!.uid).set({
           'uid': userCredential.user!.uid,
           'email': emailController.text.trim(),
+          'phone': phoneController.text.trim(),
           'fullName': fullNameController.text.trim(),
           'clinicName': clinicNameController.text.trim(),
           'location': locationController.text.trim(),
-          'username': usernameController.text.trim(),
+          'Current Availaibility': todayAvailability,
+          'Tommorows Availaibility': tomorrowAvailability,
           'role': 'doctor',
           'createdAt': FieldValue.serverTimestamp(),
         });
@@ -67,6 +109,16 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
           MaterialPageRoute(builder: (context) => DoctorDashboard()),
         );
       }
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        if (e.code == 'weak-password') {
+          errorMessage = 'The password provided is too weak.';
+        } else if (e.code == 'email-already-in-use') {
+          errorMessage = 'An account already exists for that email.';
+        } else {
+          errorMessage = 'Registration failed: ${e.message}';
+        }
+      });
     } catch (e) {
       setState(() {
         errorMessage = e.toString();
@@ -78,7 +130,13 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
     });
   }
 
-  // Rest of the code remains the same...
+  void _navigateToLogin() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => DoctorLoginScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -116,12 +174,101 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
                     ),
                   ),
                   SizedBox(height: 20),
-                  _buildTextField(emailController, 'Email or Phone Number'),
+                  _buildTextField(emailController, 'Email'),
+                  _buildTextField(phoneController, 'Phone Number'),
                   _buildTextField(fullNameController, 'Full Name'),
-                  _buildTextField(clinicNameController, 'Clinics Name'),
+                  _buildTextField(clinicNameController, 'Clinic Name'),
                   _buildTextField(locationController, 'Location'),
-                  _buildTextField(usernameController, 'Username'),
                   _buildTextField(passwordController, 'Password', obscureText: true),
+                  
+                  SizedBox(height: 15),
+                  
+                  // Today's Availability
+                  Container(
+                    padding: EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Today's Availability",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 10),
+                        GestureDetector(
+                          onTap: () => _updateAvailability(true),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(vertical: 12, horizontal: 15),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  todayAvailability,
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                                Icon(Icons.access_time, color: Colors.teal),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  SizedBox(height: 15),
+                  
+                  // Tomorrow's Availability
+                  Container(
+                    padding: EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Tomorrow's Availability",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 10),
+                        GestureDetector(
+                          onTap: () => _updateAvailability(false),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(vertical: 12, horizontal: 15),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  tomorrowAvailability,
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                                Icon(Icons.access_time, color: Colors.teal),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                   SizedBox(height: 10),
 
                   // Display Error Message
@@ -134,7 +281,7 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
                       ),
                     ),
 
-                  SizedBox(height: 10),
+                  SizedBox(height: 15),
 
                   // Register Button
                   ElevatedButton(
@@ -165,12 +312,7 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
                         style: TextStyle(color: Colors.white, fontSize: 16),
                       ),
                       GestureDetector(
-                        onTap: () {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(builder: (context) => DoctorLoginScreen()),
-                          );
-                        },
+                        onTap: _navigateToLogin,
                         child: Text(
                           'Log In',
                           style: TextStyle(
@@ -204,6 +346,8 @@ class _DoctorSignUpScreenState extends State<DoctorSignUpScreen> {
                       ),
                     ),
                   ),
+                  
+                  SizedBox(height: 20),
                 ],
               ),
             ),

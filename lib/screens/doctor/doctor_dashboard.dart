@@ -61,7 +61,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   Future<void> _loadDoctorData() async {
     try {
-      // First try to get doctor data from the 'doctors' collection (signup collection)
+      // Only get doctor data from the 'doctors' collection
       DocumentSnapshot doctorDoc = await _firestore.collection('doctors').doc(doctorId).get();
       
       if (doctorDoc.exists) {
@@ -69,19 +69,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
           doctorData = doctorDoc.data() as Map<String, dynamic>;
         });
       } else {
-        // If not found, try the 'Doctor' collection (original collection)
-        QuerySnapshot querySnapshot = await _firestore
-            .collection('Doctor')
-            .where('uid', isEqualTo: doctorId)
-            .limit(1)
-            .get();
-        
-        if (querySnapshot.docs.isNotEmpty) {
-          setState(() {
-            doctorData = querySnapshot.docs.first.data() as Map<String, dynamic>;
-            doctorId = querySnapshot.docs.first.id;
-          });
-        }
+        print("Doctor data not found in doctors collection");
       }
     } catch (e) {
       print("Error loading doctor data: $e");
@@ -110,10 +98,11 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   Future<void> _loadAppointmentsForDate(String dayKey, String date) async {
     try {
+      // Update to use the doctor's UID directly from the doctors collection
       QuerySnapshot appointmentSnapshot = await _firestore
           .collection('Appointment')
           .where('date', isEqualTo: date)
-          .where('DoctorId', isEqualTo: '/Doctor/$doctorId') // Filter for this doctor
+          .where('DoctorId', isEqualTo: doctorId) // Use doctorId directly
           .get();
 
       List<Map<String, dynamic>> dayAppointments = [];
@@ -151,9 +140,10 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
   Future<void> _loadPatientHistory() async {
     try {
+      // Update to use doctorId directly instead of Doctor collection path
       QuerySnapshot historySnapshot = await _firestore
           .collection('Records')
-          .where('DoctorId', isEqualTo: '/Doctor/$doctorId') // Filter for this doctor
+          .where('DoctorId', isEqualTo: doctorId) // Use doctorId directly
           .get();
 
       List<Map<String, dynamic>> history = [];
@@ -219,7 +209,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         await _firestore.collection('Records').add({
           'email': '/Patient/profile',  // Update with actual path format
           'FileName': '/xyz/file',
-          'DoctorId': '/Doctor/$doctorId', // Add doctor reference
+          'DoctorId': doctorId, // Use doctorId directly
           'date': DateFormat('yyyy-MM-dd').format(DateTime.now()),
           'diagnosis': 'General Checkup',
           // Add other relevant fields
@@ -392,6 +382,7 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
   bool isBookingEnabled = true;
   File? _profileImage;
   String? profileImageUrl;
+  bool isLoading = true;
   
   // Controllers for text fields
   final TextEditingController _specializationController = TextEditingController();
@@ -419,26 +410,42 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     super.dispose();
   }
   
-  
   Future<void> _loadDoctorProfile() async {
+    setState(() {
+      isLoading = true;
+    });
+    
     try {
-      // Use the provided doctor data
-      setState(() {
-        // Try to get data from both registration fields and original fields
-        doctorName = widget.doctorData['fullName'] ?? widget.doctorData['name'] ?? 'Doctor';
-        doctorSpecialization = widget.doctorData['specialization'] ?? widget.doctorData['Specialization'] ?? 'General';
-        clinicAddress = widget.doctorData['clinicName'] ?? widget.doctorData['Clinics Name'] ?? 'Clinic';
-        doctorLocation = widget.doctorData['location'] ?? widget.doctorData['Location'] ?? '';
-        doctorEmail = widget.doctorData['email'] ?? '';
-        doctorPhone = widget.doctorData['contactNo'] ?? widget.doctorData['phone'] ?? '';
-        doctorExperience = widget.doctorData['experience'] ?? widget.doctorData['Experience'] ?? '';
-        doctorQualification = widget.doctorData['qualification'] ?? widget.doctorData['Qualification'] ?? '';
-        currentAvailability = widget.doctorData['Current Availaibility'] ?? currentAvailability;
-        availabilityDay1 = widget.doctorData['Tommorows Availaibility'] ?? availabilityDay1;
-        availabilityDay2 = widget.doctorData['Day After Tommorows Availaibility'] ?? availabilityDay2;
-        profileImageUrl = widget.doctorData['profile_picture'];
-        isBookingEnabled = widget.doctorData['booking_enabled'] ?? true;
-      });
+      // First try to get fresh data from Firestore
+      if (widget.doctorId.isNotEmpty) {
+        DocumentSnapshot doctorDoc = await _firestore.collection('doctors').doc(widget.doctorId).get();
+        
+        if (doctorDoc.exists) {
+          Map<String, dynamic> doctorData = doctorDoc.data() as Map<String, dynamic>;
+          
+          setState(() {
+            doctorName = doctorData['fullName'] ?? doctorData['name'] ?? 'Doctor';
+            doctorSpecialization = doctorData['specialization'] ?? 'General';
+            clinicAddress = doctorData['clinicName'] ?? 'Clinic';
+            doctorLocation = doctorData['location'] ?? '';
+            doctorEmail = doctorData['email'] ?? '';
+            doctorPhone = doctorData['contactNo'] ?? doctorData['phone'] ?? '';
+            doctorExperience = doctorData['experience'] ?? '';
+            doctorQualification = doctorData['qualification'] ?? '';
+            currentAvailability = doctorData['Current Availaibility'] ?? currentAvailability;
+            availabilityDay1 = doctorData['Tommorows Availaibility'] ?? availabilityDay1;
+            availabilityDay2 = doctorData['Day After Tommorows Availaibility'] ?? availabilityDay2;
+            profileImageUrl = doctorData['profile_picture'];
+            isBookingEnabled = doctorData['booking_enabled'] ?? true;
+          });
+        } else {
+          // If document doesn't exist, use the provided data
+          _setDataFromProps();
+        }
+      } else {
+        // If no doctorId, use the provided data
+        _setDataFromProps();
+      }
       
       // Set initial values for controllers
       _specializationController.text = doctorSpecialization;
@@ -447,10 +454,32 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       _experienceController.text = doctorExperience;
     } catch (e) {
       print("Error loading doctor profile: $e");
+      // Fallback to provided data
+      _setDataFromProps();
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
     }
   }
-
   
+  void _setDataFromProps() {
+    setState(() {
+      doctorName = widget.doctorData['fullName'] ?? widget.doctorData['name'] ?? 'Doctor';
+      doctorSpecialization = widget.doctorData['specialization'] ?? 'General';
+      clinicAddress = widget.doctorData['clinicName'] ?? 'Clinic';
+      doctorLocation = widget.doctorData['location'] ?? '';
+      doctorEmail = widget.doctorData['email'] ?? '';
+      doctorPhone = widget.doctorData['contactNo'] ?? widget.doctorData['phone'] ?? '';
+      doctorExperience = widget.doctorData['experience'] ?? '';
+      doctorQualification = widget.doctorData['qualification'] ?? '';
+      currentAvailability = widget.doctorData['Current Availaibility'] ?? currentAvailability;
+      availabilityDay1 = widget.doctorData['Tommorows Availaibility'] ?? availabilityDay1;
+      availabilityDay2 = widget.doctorData['Day After Tommorows Availaibility'] ?? availabilityDay2;
+      profileImageUrl = widget.doctorData['profile_picture'];
+      isBookingEnabled = widget.doctorData['booking_enabled'] ?? true;
+    });
+  }
 
   Future<void> _loadSavedData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -487,7 +516,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       
       // Update in Firestore
       if (widget.doctorId.isNotEmpty) {
-        // Try to update in doctors collection first (signup collection)
         try {
           await _firestore.collection('doctors').doc(widget.doctorId).update({
             'Current Availaibility': currentAvailability,
@@ -495,16 +523,7 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
             'Day After Tommorows Availaibility': availabilityDay2,
           });
         } catch (e) {
-          // If fails, try the Doctor collection
-          try {
-            await _firestore.collection('Doctor').doc(widget.doctorId).update({
-              'Current Availaibility': currentAvailability,
-              'Tommorows Availaibility': availabilityDay1,
-              'Day After Tommorows Availaibility': availabilityDay2,
-            });
-          } catch (e) {
-            print("Error updating availability in Firestore: $e");
-          }
+          print("Error updating availability in Firestore: $e");
         }
       }
       
@@ -540,21 +559,12 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
         // Update in Firestore
         if (widget.doctorId.isNotEmpty) {
           try {
-            // Try doctors collection (signup collection)
             await _firestore.collection('doctors').doc(widget.doctorId).update({
               day == 1 ? 'Tommorows Availaibility' : 'Day After Tommorows Availaibility': 
                 day == 1 ? availabilityDay1 : availabilityDay2,
             });
           } catch (e) {
-            // If fails, try Doctor collection
-            try {
-              await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                day == 1 ? 'Tommorows Availaibility' : 'Day After Tommorows Availaibility': 
-                  day == 1 ? availabilityDay1 : availabilityDay2,
-              });
-            } catch (e) {
-              print("Error updating availability in Firestore: $e");
-            }
+            print("Error updating availability in Firestore: $e");
           }
         }
         
@@ -587,19 +597,11 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
               // Update in Firestore
               if (widget.doctorId.isNotEmpty) {
                 try {
-                  // Try doctors collection first
                   await _firestore.collection('doctors').doc(widget.doctorId).update({
                     'clinicName': clinicAddress,
                   });
                 } catch (e) {
-                  // If fails, try Doctor collection
-                  try {
-                    await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                      'Clinics Name': clinicAddress,
-                    });
-                  } catch (e) {
-                    print("Error updating clinic address in Firestore: $e");
-                  }
+                  print("Error updating clinic address in Firestore: $e");
                 }
               }
               
@@ -636,19 +638,11 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
               // Update in Firestore
               if (widget.doctorId.isNotEmpty) {
                 try {
-                  // Try doctors collection first
                   await _firestore.collection('doctors').doc(widget.doctorId).update({
                     'specialization': doctorSpecialization,
                   });
                 } catch (e) {
-                  // If fails, try Doctor collection
-                  try {
-                    await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                      'Specialization': doctorSpecialization,
-                    });
-                  } catch (e) {
-                    print("Error updating specialization in Firestore: $e");
-                  }
+                  print("Error updating specialization in Firestore: $e");
                 }
               }
               
@@ -685,19 +679,11 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
               // Update in Firestore
               if (widget.doctorId.isNotEmpty) {
                 try {
-                  // Try doctors collection first
                   await _firestore.collection('doctors').doc(widget.doctorId).update({
                     'qualification': doctorQualification,
                   });
                 } catch (e) {
-                  // If fails, try Doctor collection
-                  try {
-                    await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                      'Qualification': doctorQualification,
-                    });
-                  } catch (e) {
-                    print("Error updating qualification in Firestore: $e");
-                  }
+                  print("Error updating qualification in Firestore: $e");
                 }
               }
               
@@ -735,19 +721,11 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
               // Update in Firestore
               if (widget.doctorId.isNotEmpty) {
                 try {
-                  // Try doctors collection first
                   await _firestore.collection('doctors').doc(widget.doctorId).update({
                     'experience': doctorExperience,
                   });
                 } catch (e) {
-                  // If fails, try Doctor collection
-                  try {
-                    await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                      'Experience': doctorExperience,
-                    });
-                  } catch (e) {
-                    print("Error updating experience in Firestore: $e");
-                  }
+                  print("Error updating experience in Firestore: $e");
                 }
               }
               
@@ -773,32 +751,32 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       // Upload to Firebase Storage
       if (widget.doctorId.isNotEmpty) {
         try {
+          setState(() {
+            isLoading = true;
+          });
+          
           String fileName = 'doctor_profiles/${widget.doctorId}.jpg';
           await _storage.ref(fileName).putFile(_profileImage!);
           String downloadURL = await _storage.ref(fileName).getDownloadURL();
           
           // Update profile pic URL in Firestore
           try {
-            // Try doctors collection first
             await _firestore.collection('doctors').doc(widget.doctorId).update({
               'profile_picture': downloadURL,
             });
+            
+            setState(() {
+              profileImageUrl = downloadURL;
+            });
           } catch (e) {
-            // If fails, try Doctor collection
-            try {
-              await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                'profile_picture': downloadURL,
-              });
-            } catch (e) {
-              print("Error updating profile picture in Firestore: $e");
-            }
+            print("Error updating profile picture in Firestore: $e");
           }
-          
-          setState(() {
-            profileImageUrl = downloadURL;
-          });
         } catch (e) {
           print("Error uploading image: $e");
+        } finally {
+          setState(() {
+            isLoading = false;
+          });
         }
       }
     }
@@ -812,7 +790,9 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
         backgroundColor: Colors.teal,
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
+      body: isLoading 
+      ? Center(child: CircularProgressIndicator(color: Colors.teal))
+      : SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -877,19 +857,11 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                       // Update in Firestore
                       if (widget.doctorId.isNotEmpty) {
                         try {
-                          // Try doctors collection first
                           await _firestore.collection('doctors').doc(widget.doctorId).update({
                             'booking_enabled': isBookingEnabled,
                           });
                         } catch (e) {
-                          // If fails, try Doctor collection
-                          try {
-                            await _firestore.collection('Doctor').doc(widget.doctorId).update({
-                              'booking_enabled': isBookingEnabled,
-                            });
-                          } catch (e) {
-                            print("Error updating booking status in Firestore: $e");
-                          }
+                          print("Error updating booking status in Firestore: $e");
                         }
                       }
                       

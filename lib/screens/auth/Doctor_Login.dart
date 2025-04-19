@@ -1,8 +1,106 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../doctor/doctor_dashboard.dart';
-import '../auth/doctor_signup_screen.dart';  // Import Sign Up screen for navigation
+import '../auth/doctor_signup_screen.dart';
 
-class DoctorLoginScreen extends StatelessWidget {
+class DoctorLoginScreen extends StatefulWidget {
+  @override
+  _DoctorLoginScreenState createState() => _DoctorLoginScreenState();
+}
+
+class _DoctorLoginScreenState extends State<DoctorLoginScreen> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  
+  bool isLoading = false;
+  String errorMessage = '';
+
+  Future<void> _loginDoctor() async {
+    if (emailController.text.isEmpty || passwordController.text.isEmpty) {
+      setState(() {
+        errorMessage = "Email and password are required!";
+      });
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+
+    try {
+      // Attempt to sign in with email and password
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: emailController.text.trim(),
+        password: passwordController.text.trim(),
+      );
+
+      // If successful, navigate to the doctor dashboard
+      if (userCredential.user != null) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => DoctorDashboard()),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        if (e.code == 'user-not-found') {
+          errorMessage = 'No user found with this email.';
+        } else if (e.code == 'wrong-password') {
+          errorMessage = 'Wrong password provided.';
+        } else {
+          errorMessage = 'Login failed: ${e.message}';
+        }
+      });
+    } catch (e) {
+      setState(() {
+        errorMessage = e.toString();
+      });
+    }
+
+    setState(() {
+      isLoading = false;
+    });
+  }
+
+  void _navigateToSignUp() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => DoctorSignUpScreen()),
+    );
+  }
+
+  void _forgotPassword() async {
+    if (emailController.text.isEmpty) {
+      setState(() {
+        errorMessage = "Please enter your email to reset password";
+      });
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+
+    try {
+      await _auth.sendPasswordResetEmail(email: emailController.text.trim());
+      setState(() {
+        errorMessage = 'Password reset email sent. Please check your inbox.';
+      });
+    } catch (e) {
+      setState(() {
+        errorMessage = 'Failed to send reset email: ${e.toString()}';
+      });
+    }
+
+    setState(() {
+      isLoading = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -40,21 +138,39 @@ class DoctorLoginScreen extends StatelessWidget {
                     ),
                   ),
                   SizedBox(height: 20),
-                  _buildTextField('Email or Phone Number'),
-                  _buildTextField('Password', obscureText: true),
+                  _buildTextField(emailController, 'Email'),
+                  _buildTextField(passwordController, 'Password', obscureText: true),
+                  
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
-                      onPressed: () {
-                        // Add Forgot Password functionality
-                      },
+                      onPressed: isLoading ? null : _forgotPassword,
                       child: Text(
                         'Forgot Password?',
-                        style: TextStyle(color: Colors.white, fontSize: 14, decoration: TextDecoration.underline),
+                        style: TextStyle(
+                          color: Colors.white, 
+                          fontSize: 14, 
+                          decoration: TextDecoration.underline
+                        ),
                       ),
                     ),
                   ),
+                  
+                  // Display Error Message
+                  if (errorMessage.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        errorMessage,
+                        style: TextStyle(
+                          color: errorMessage.contains('sent') ? Colors.white : Colors.red,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+
                   SizedBox(height: 10),
+                  
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
@@ -63,16 +179,21 @@ class DoctorLoginScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(25),
                       ),
                     ),
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => DoctorDashboard()),
-                    ),
-                    child: Text(
-                      'Login',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-                    ),
+                    onPressed: isLoading ? null : _loginDoctor,
+                    child: isLoading
+                        ? CircularProgressIndicator(color: Colors.white)
+                        : Text(
+                            'Login',
+                            style: TextStyle(
+                              fontSize: 18, 
+                              fontWeight: FontWeight.bold, 
+                              color: Colors.white
+                            ),
+                          ),
                   ),
+                  
                   SizedBox(height: 15),
+                  
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -81,12 +202,7 @@ class DoctorLoginScreen extends StatelessWidget {
                         style: TextStyle(color: Colors.white, fontSize: 16),
                       ),
                       GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => DoctorSignUpScreen()),
-                          );
-                        },
+                        onTap: _navigateToSignUp,
                         child: Text(
                           'Sign Up',
                           style: TextStyle(
@@ -108,10 +224,11 @@ class DoctorLoginScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildTextField(String hintText, {bool obscureText = false}) {
+  Widget _buildTextField(TextEditingController controller, String hintText, {bool obscureText = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: TextField(
+        controller: controller,
         obscureText: obscureText,
         decoration: InputDecoration(
           hintText: hintText,
