@@ -51,14 +51,14 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         doctorId = user.uid;
       });
       await _loadDoctorData();
-      await _loadAppointments();
+      await _loadAppointmentsForDoctor(); // Use the new method
+      await _loadPatientHistory();
     } else {
       setState(() {
         isLoading = false;
       });
     }
   }
-
   Future<void> _loadDoctorData() async {
     try {
       // Only get doctor data from the 'doctors' collection
@@ -80,64 +80,89 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     }
   }
 
-  Future<void> _loadAppointments() async {
-    // Get today's date
-    DateTime now = DateTime.now();
-    String todayDate = DateFormat('yyyy-MM-dd').format(now);
-    String tomorrowDate = DateFormat('yyyy-MM-dd').format(now.add(Duration(days: 1)));
-    String dayAfterTomorrowDate = DateFormat('yyyy-MM-dd').format(now.add(Duration(days: 2)));
-
-    // Load appointments from Firestore
-    await _loadAppointmentsForDate("Today", todayDate);
-    await _loadAppointmentsForDate("Tomorrow", tomorrowDate);
-    await _loadAppointmentsForDate("Day After Tomorrow", dayAfterTomorrowDate);
-    
-    // Load patient history
-    await _loadPatientHistory();
-  }
-
-  Future<void> _loadAppointmentsForDate(String dayKey, String date) async {
+  Future<void> _loadAppointmentsForDoctor() async {
     try {
-      // Update to use the doctor's UID directly from the doctors collection
+      setState(() {
+        isLoading = true;
+      });
+
+      // Get the current doctor's email from authentication or doctor data
+      String doctorEmail = doctorData['email'] ?? _auth.currentUser?.email ?? '';
+
+      // Get today's date and the next two days
+      DateTime now = DateTime.now();
+      String todayDate = DateFormat('yyyy-MM-dd').format(now);
+      String tomorrowDate = DateFormat('yyyy-MM-dd').format(now.add(Duration(days: 1)));
+      String dayAfterTomorrowDate = DateFormat('yyyy-MM-dd').format(now.add(Duration(days: 2)));
+
+      // Clear previous appointments
+      setState(() {
+        appointments = {
+          "Today": [],
+          "Tomorrow": [],
+          "Day After Tomorrow": [],
+        };
+      });
+
+      // Create a query to fetch appointments where doctorEmail matches
       QuerySnapshot appointmentSnapshot = await _firestore
           .collection('Appointment')
-          .where('date', isEqualTo: date)
-          .where('DoctorId', isEqualTo: doctorId) // Use doctorId directly
+          .where('doctorEmail', isEqualTo: doctorEmail)
           .get();
 
-      List<Map<String, dynamic>> dayAppointments = [];
-      
+      // Process appointments and categorize by date
       for (var doc in appointmentSnapshot.docs) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-        
-        // Get patient details
-        DocumentSnapshot patientDoc = await _firestore
+        String appointmentDate = data['date'] ?? '';
+
+        // Get patient details using patientEmail
+        String patientEmail = data['patientEmail'] ?? '';
+        QuerySnapshot patientSnapshot = await _firestore
             .collection('Patient')
-            .doc(data['PatientId'] != null ? data['PatientId'].toString().replaceAll('/Patient/', '') : '')
+            .where('email', isEqualTo: patientEmail)
+            .limit(1)
             .get();
-        
+
         Map<String, dynamic> patientData = {};
-        if (patientDoc.exists) {
-          patientData = patientDoc.data() as Map<String, dynamic>;
+        if (patientSnapshot.docs.isNotEmpty) {
+          patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
         }
 
-        dayAppointments.add({
+        // Create appointment object
+        Map<String, dynamic> appointmentData = {
           "id": doc.id,
           "name": patientData['name'] ?? "Unknown Patient",
-          "time": data['TimeSlot'] ?? "Not Set",
-          "contact": patientData['contactNumber No.'] != null ? patientData['contactNumber No.'].toString() : "N/A",
-          "done": data['status'] == true,
-        });
-      }
+          "time": data['TimeSlot'] ?? data['timeSlot'] ?? "Not Set",
+          "contact": patientData['contactNumber No.'] ?? patientData['phone'] ?? "N/A",
+          "done": data['Status'] == "Completed" || data['status'] == true,
+          "clinicName": data['ClinicsName'] ?? data['clinicsName'] ?? "N/A",
+          "location": data['location'] ?? "N/A",
+        };
 
-      setState(() {
-        appointments[dayKey] = dayAppointments;
-      });
+        // Add to appropriate day category
+        String category = "";
+        if (appointmentDate == todayDate) {
+          category = "Today";
+        } else if (appointmentDate == tomorrowDate) {
+          category = "Tomorrow";
+        } else if (appointmentDate == dayAfterTomorrowDate) {
+          category = "Day After Tomorrow";
+        }
+
+        if (category.isNotEmpty) {
+          setState(() {
+            appointments[category]!.add(appointmentData);
+          });
+        }
+      }
     } catch (e) {
-      print("Error loading appointments for $dayKey: $e");
+      print("Error loading doctor appointments: $e");
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
     }
   }
-
   Future<void> _loadPatientHistory() async {
     try {
       // Update to use doctorId directly instead of Doctor collection path
