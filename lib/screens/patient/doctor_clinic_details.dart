@@ -62,10 +62,43 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
     'Day After': [], // Added Day After to initialize properly
   };
 
+  // For storing patient contact number
+  TextEditingController patientContactController = TextEditingController();
+  
+  // Fix: Initialize patientContact properly
+  String patientContact = '';
+
   @override
   void initState() {
     super.initState();
     _loadDoctorAvailability();
+    _loadPatientContact(); // Added to load patient contact if available
+  }
+  
+  // New method to load patient contact info
+  Future<void> _loadPatientContact() async {
+    try {
+      // Try to get the user's contact from Firestore based on email
+      if (widget.patientEmail != null && widget.patientEmail!.isNotEmpty) {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.patientEmail)
+            .get();
+        
+        if (userDoc.exists) {
+          var userData = userDoc.data() as Map<String, dynamic>?;
+          if (userData != null && userData.containsKey('phone')) {
+            setState(() {
+              patientContact = userData['phone'] ?? '';
+              patientContactController.text = patientContact;
+            });
+            print("Loaded patient contact: $patientContact");
+          }
+        }
+      }
+    } catch (e) {
+      print("Error loading patient contact: $e");
+    }
   }
   
   // Load doctor's availability for today and tomorrow
@@ -440,6 +473,21 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       );
       return;
     }
+    
+    // Fix: Get the contact number from the text controller
+    patientContact = patientContactController.text.trim();
+    
+    // Check if patient contact is provided
+    if (patientContact.isEmpty) {
+      Fluttertoast.showToast(
+        msg: "Please enter your contact number",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
 
     setState(() {
       isBooking = true;
@@ -459,6 +507,7 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       
       print("Booking appointment for doctor: ${widget.doctorName}");
       print("Patient email: ${widget.patientEmail}");
+      print("Patient contact: $patientContact");
       print("Date: $formattedDate");
       print("Time slot: $selectedTimeSlot");
 
@@ -467,9 +516,11 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
         'ClinicsName': widget.clinicName,
         'doctorName': widget.doctorName,
         'doctorEmail': widget.doctorEmail,
+        'doctorContact': widget.contact,  // Doctor's contact information
+        'patientContact': patientContact, // Patient's contact information
         'TimeSlot': selectedTimeSlot,
         'date': formattedDate,
-        'Status': 'Pending',
+        'Status': 'Booked',
         'specialization': widget.specialization,
         'bookedOn': DateTime.now().toIso8601String(),
         'location': widget.location,
@@ -495,12 +546,32 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
             .add(appointmentData);
             
         print("Appointment added to user's myAppointments collection");
+        
+        // Fix: Update the user's profile with the contact number if not already set
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.patientEmail)
+            .set({
+              'phone': patientContact
+            }, SetOptions(merge: true));
+            
+        print("Updated user's contact information");
+        
       } catch (directFirestoreError) {
         print("Error directly saving to Firestore: $directFirestoreError");
         
         // Fallback to the FirebaseServices method
         print("Trying fallback booking method...");
         await _firebaseServices.bookAppointment(widget.patientEmail!, appointmentData);
+        
+        // Try to update user's contact separately
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(widget.patientEmail)
+            .set({
+              'phone': patientContact
+            }, SetOptions(merge: true));
+            
         print("Appointment booked via FirebaseServices");
       }
 
@@ -646,6 +717,31 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                   
                   SizedBox(height: 20),
                   
+                  // Contact number input field
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.teal.shade300),
+                    ),
+                    child: TextField(
+                      controller: patientContactController,
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        hintText: "Enter your contact number",
+                        prefixIcon: Icon(Icons.phone, color: Colors.teal),
+                      ),
+                      keyboardType: TextInputType.phone,
+                      onChanged: (value) {
+                        // Fix: Update patientContact directly when text changes
+                        patientContact = value;
+                      },
+                    ),
+                  ),
+                  
+                  SizedBox(height: 20),
+                  
                   // Show availability status
                   Container(
                     padding: EdgeInsets.all(8),
@@ -690,7 +786,7 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                         ),
                       )
                     : Container(
-                        padding: EdgeInsets.symmetric(horizontal: 12),
+                      padding: EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
                           color: Colors.grey[200],
                           borderRadius: BorderRadius.circular(8),
@@ -751,4 +847,4 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       ),
     );
   }
-}
+}                          

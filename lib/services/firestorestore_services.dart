@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class FirebaseServices {
@@ -204,6 +205,48 @@ class FirebaseServices {
     } catch (e) {
       print("Error fetching booked appointments: $e");
       return [];
+    }
+  }
+
+  // Add this function in a service class or where you handle booking logic
+
+  Future<bool> saveAppointment({
+    required String patientEmail,
+    required String patientName,
+    required String doctorName,
+    required String doctorEmail,
+    required String doctorSpecialty,
+    required String clinicName,
+    required String location,
+    required DateTime appointmentDate,
+    String? notes,
+  }) async {
+    try {
+      // Create appointment document in Firestore
+      await FirebaseFirestore.instance.collection('appointments').add({
+        'patientEmail': patientEmail,
+        'patientName': patientName,
+        'doctorName': doctorName,
+        'doctorEmail': doctorEmail,
+        'doctorSpecialty': doctorSpecialty,
+        'clinicName': clinicName,
+        'location': location,
+        'appointmentDate': Timestamp.fromDate(appointmentDate),
+        'bookingTime': Timestamp.fromDate(DateTime.now()),
+        'status': 'Booked',
+        'notes': notes ?? '',
+        'paymentStatus': 'Pending',
+      });
+      
+      // Update shared preferences with latest booking info
+      final prefs = await SharedPreferences.getInstance();
+      String latestBooking = "Appointment with $doctorName on ${DateFormat('MMM dd, yyyy - hh:mm a').format(appointmentDate)}";
+      await prefs.setString("latest_booking", latestBooking);
+      
+      return true;
+    } catch (e) {
+      print('Error saving appointment: $e');
+      return false;
     }
   }
   

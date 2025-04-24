@@ -303,7 +303,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
     // Also check potential nested objects or differently named fields
     if (data['doctor'] is Map) {
-      Map<String, dynamic> doctorInfo = data['doctor'];
+      Map<String, dynamic> doctorInfo = data['doctor'] as Map<String, dynamic>;
       if (doctorInfo['email'] != null) {
         apptDoctorEmail = doctorInfo['email'].toString().toLowerCase().trim();
       }
@@ -345,50 +345,6 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
     return emailMatches || nameMatches || idMatches;
   }
-  // Helper: Determine which date category an appointment belongs to
-  String _determineDateCategory(
-    String appointmentDate,
-    List<String> todayFormats,
-    List<String> tomorrowFormats,
-    List<String> dayAfterFormats
-  ) {
-    // Try to match against any of our date format variations
-    if (todayFormats.contains(appointmentDate)) {
-      return "Today";
-    }
-    
-    if (tomorrowFormats.contains(appointmentDate)) {
-      return "Tomorrow";
-    }
-    
-    if (dayAfterFormats.contains(appointmentDate)) {
-      return "Day After Tomorrow";
-    }
-    
-    // If no exact match, try more flexible parsing
-    try {
-      // Try to parse the date in various formats
-      DateTime? parsed = _tryParseDate(appointmentDate);
-      
-      if (parsed != null) {
-        // Get today, tomorrow and day after tomorrow at midnight for comparison
-        DateTime today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-        DateTime tomorrow = today.add(Duration(days: 1));
-        DateTime dayAfter = today.add(Duration(days: 2));
-        
-        // Compare with parsed date
-        DateTime parsedMidnight = DateTime(parsed.year, parsed.month, parsed.day);
-        
-        if (parsedMidnight == today) return "Today";
-        if (parsedMidnight == tomorrow) return "Tomorrow";
-        if (parsedMidnight == dayAfter) return "Day After Tomorrow";
-      }
-    } catch (e) {
-      print("Error parsing date: $e");
-    }
-    
-    return ""; // No match
-  }
   
   // Helper: Try to parse date in multiple formats
   DateTime? _tryParseDate(String dateStr) {
@@ -401,7 +357,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       'd MMMM yyyy',
       'MMMM d, yyyy',
     ];
-    
+
     for (String format in formats) {
       try {
         return DateFormat(format).parse(dateStr);
@@ -409,7 +365,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         // Try next format
       }
     }
-    
+
     // If none of our formats work, let Dart try to figure it out
     try {
       return DateTime.parse(dateStr);
@@ -426,151 +382,168 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                           data['PatientEmail'] ?? 
                           data['patient_email'] ?? 
                           data['email'] ?? '').toString();
-
+  
     // Extract appointment time
     String timeSlot = (data['TimeSlot'] ?? 
                       data['timeSlot'] ?? 
                       data['time'] ?? 
                       data['appointmentTime'] ?? "Unknown Time").toString();
-
+  
     // Extract appointment date
     String date = (data['date'] ?? 
                   data['Date'] ?? 
                   data['appointmentDate'] ?? "").toString();
-
+  
+    // Extract doctor contact specifically
+    String doctorContact = (data['doctorContact'] ?? 
+                           data['DoctorContact'] ?? 
+                           data['doctor_contact'] ?? 
+                           "Unknown").toString();
+  
     // Extract status
     bool isCompleted = (data['Status'] == "Completed" || 
                         data['status'] == "Completed" ||
                         data['Status'] == "completed" ||
                         data['status'] == "completed");
-
+  
     // Extract clinic name
     String clinicName = (data['ClinicsName'] ?? 
                         data['clinicsName'] ?? 
                         data['clinicName'] ?? 
                         data['ClinicName'] ?? "").toString();
-
+  
+    // Get additional appointment details
+    String reason = (data['reason'] ?? 
+                    data['Reason'] ?? 
+                    data['purpose'] ?? 
+                    data['visitReason'] ?? 
+                    "General Checkup").toString();
+  
+    String location = (data['location'] ?? 
+                      data['Location'] ?? 
+                      data['place'] ?? "").toString();
+  
+    String specialization = (data['specialization'] ?? 
+                            data['Specialization'] ?? 
+                            data['specialty'] ?? "").toString();
+  
+    String bookedOn = (data['bookedOn'] ?? 
+                      data['BookedOn'] ?? 
+                      data['bookingDate'] ?? "").toString();
+  
     print("Extracted appointment details - Email: $patientEmail, Time: $timeSlot, Date: $date, Clinic: $clinicName");
-
-    // Create appointment data object
+  
+    // Create appointment data object with all available fields
     Map<String, dynamic> appointmentData = {
       "id": docId,
       "name": "Unknown Patient", // Will update if patient data is found
       "time": timeSlot,
       "date": date,
       "contact": "Unknown",
+      "doctorContact": doctorContact, // Added doctor contact specifically
       "done": isCompleted,
       "clinicName": clinicName,
       "patientEmail": patientEmail,
+      "reason": reason,
+      "location": location,
+      "specialization": specialization,
+      "bookedOn": bookedOn,
+      // Add all other relevant fields from the original data
+      "rawData": data, // Include raw data for reference if needed
     };
-
-    // Try to get patient information
+  
+    // Try to get patient information through multiple methods
     if (patientEmail.isNotEmpty) {
-      try {
-        // Try multiple paths to find patient data
-        List<Future<QuerySnapshot>> patientQueries = [
-          _firestore.collection('Patient')
-              .where('email', isEqualTo: patientEmail)
-              .limit(1)
-              .get(),
-
-          _firestore.collection('patients')
-              .where('email', isEqualTo: patientEmail)
-              .limit(1)
-              .get(),
-
-          // If there are other collections that might have patient info, add them here
-        ];
-
-        for (var patientQueryFuture in patientQueries) {
-          QuerySnapshot patientSnapshot = await patientQueryFuture;
-
-          if (patientSnapshot.docs.isNotEmpty) {
-            Map<String, dynamic> patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
-
-            // Try to extract name from multiple possible field names
-            String patientName = (patientData['name'] ?? 
-                                patientData['fullName'] ?? 
-                                patientData['Name'] ?? 
-                                "Unknown Patient").toString();
-
-            // Try to extract contact from multiple possible field names
-            String patientContact = (patientData['contactNumber No.'] ?? 
-                                  patientData['phone'] ?? 
-                                  patientData['phoneNumber'] ?? 
-                                  patientData['contact'] ?? 
-                                  patientData['contactNo'] ?? 
-                                  "N/A").toString();
-
-            appointmentData["name"] = patientName;
-            appointmentData["contact"] = patientContact;
-
-            print("Found patient info: $patientName");
-            break;  // Exit loop once we find patient data
-          }
-        }
-      } catch (e) {
-        print("Error fetching patient data: $e");
-      }
+      await _fetchPatientDetails(patientEmail, appointmentData);
     } else {
       // If there's no email, try to extract patient name directly from appointment
       String patientName = (data['patientName'] ?? 
                          data['PatientName'] ?? 
                          data['patient_name'] ?? 
                          "Unknown Patient").toString();
-
+  
       String patientContact = (data['patientContact'] ?? 
                            data['PatientContact'] ?? 
                            data['patient_contact'] ?? 
                            data['contactNo'] ?? 
+                           data['contact'] ??
                            "Unknown").toString();
-
+  
       appointmentData["name"] = patientName;
       appointmentData["contact"] = patientContact;
+  
+      // If we have a phone number but no email, try finding patient by phone number
+      if (patientContact != "Unknown" && patientContact.isNotEmpty) {
+        await _fetchPatientDetailsByContact(patientContact, appointmentData);
+      }
     }
-
+  
     return appointmentData;
   }
 
   Future<void> _loadPatientHistory() async {
-    // Your existing _loadPatientHistory method can remain unchanged
     try {
-      // Update to use doctorId directly instead of Doctor collection path
+      // Update to use doctorId directly
       QuerySnapshot historySnapshot = await _firestore
           .collection('Records')
-          .where('DoctorId', isEqualTo: doctorId) // Use doctorId directly
+          .where('DoctorId', isEqualTo: doctorId)
           .get();
 
       List<Map<String, dynamic>> history = [];
-      
+
       for (var doc in historySnapshot.docs) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-        
-        // Get patient details
-        String patientEmail = data['email'] != null ? 
-            data['email'].toString().replaceAll('/Patient/profile', '') : '';
-        
-        DocumentSnapshot? patientDoc;
-        QuerySnapshot querySnapshot = await _firestore
-          .collection('Patient')
-          .where('email', isEqualTo: patientEmail)
-          .limit(1)
-          .get();
 
-        if (querySnapshot.docs.isNotEmpty) {
-          patientDoc = querySnapshot.docs.first;
+        // Create a base record with all fields from the Records document
+        Map<String, dynamic> historyRecord = {
+          "name": data['patientName'] ?? "Unknown",
+          "contact": data['patientContact'] ?? "N/A",
+          "illness": data['diagnosis'] ?? "General Checkup",
+          "date": data['date'] ?? "",
+          "time": data['appointmentTime'] ?? "",
+          "clinicName": data['clinicName'] ?? "",
+          "location": data['location'] ?? "",
+          "completedDate": data['completedDate'] ?? "",
+          "notes": data['notes'] ?? "",
+          "prescription": data['prescription'] ?? "",
+        };
+
+        // Get patient email (handle different formats if needed)
+        String patientEmail = "";
+        if (data['email'] != null) {
+          patientEmail = data['email'].toString().replaceAll('/Patient/profile', '');
+          historyRecord["patientEmail"] = patientEmail;
         }
-        
-        if (patientDoc != null) {
-          Map<String, dynamic> patientData = patientDoc.data() as Map<String, dynamic>;
-          
-          history.add({
-            "name": patientData['name'] ?? "Unknown",
-            "contact": patientData['contactNumber No.'] != null ? 
-                patientData['contactNumber No.'].toString() : "N/A",
-            "illness": data['diagnosis'] ?? "General Checkup", // Added diagnosis field
-          });
+
+        // Try to get additional patient details if not already in Records
+        if (patientEmail.isNotEmpty && (historyRecord["name"] == "Unknown" || historyRecord["contact"] == "N/A")) {
+          try {
+            QuerySnapshot querySnapshot = await _firestore
+              .collection('Patient')
+              .where('email', isEqualTo: patientEmail)
+              .limit(1)
+              .get();
+
+            if (querySnapshot.docs.isNotEmpty) {
+              Map<String, dynamic> patientData = querySnapshot.docs.first.data() as Map<String, dynamic>;
+
+              // Only update if data is missing
+              if (historyRecord["name"] == "Unknown" && patientData['name'] != null) {
+                historyRecord["name"] = patientData['name'];
+              }
+
+              if (historyRecord["contact"] == "N/A" && patientData['contactNumber No.'] != null) {
+                historyRecord["contact"] = patientData['contactNumber No.'].toString();
+              } else if (historyRecord["contact"] == "N/A" && patientData['phone'] != null) {
+                historyRecord["contact"] = patientData['phone'].toString();
+              }
+            }
+          } catch (e) {
+            print("Error fetching additional patient data: $e");
+          }
         }
+
+        history.add(historyRecord);
       }
 
       setState(() {
@@ -578,6 +551,202 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       });
     } catch (e) {
       print("Error loading patient history: $e");
+      print(StackTrace.current);
+    }
+  }
+  // Helper method to fetch patient details by email
+  Future<void> _fetchPatientDetails(String patientEmail, Map<String, dynamic> appointmentData) async {
+    try {
+      bool patientFound = false;
+
+      // Try multiple paths to find patient data
+      List<Future<QuerySnapshot>> patientQueries = [
+        _firestore.collection('Patient')
+            .where('email', isEqualTo: patientEmail)
+            .limit(1)
+            .get(),
+
+        _firestore.collection('patients')
+            .where('email', isEqualTo: patientEmail)
+            .limit(1)
+            .get(),
+
+        // Also try with case insensitive email
+        _firestore.collection('Patient')
+            .where('email', isEqualTo: patientEmail.toLowerCase())
+            .limit(1)
+            .get(),
+
+        _firestore.collection('patients')
+            .where('email', isEqualTo: patientEmail.toLowerCase())
+            .limit(1)
+            .get(),
+
+        // Try users collection
+        _firestore.collection('users')
+            .where('email', isEqualTo: patientEmail)
+            .limit(1)
+            .get(),
+      ];
+
+      for (var patientQueryFuture in patientQueries) {
+        try {
+          QuerySnapshot patientSnapshot = await patientQueryFuture;
+
+          if (patientSnapshot.docs.isNotEmpty) {
+            DocumentSnapshot patientDoc = patientSnapshot.docs.first;
+            Map<String, dynamic> patientData = patientDoc.data() as Map<String, dynamic>;
+
+            _extractAndPopulatePatientData(patientData, appointmentData);
+            patientFound = true;
+            print("Found patient info: ${appointmentData["name"]}");
+            break;  // Exit loop once we find patient data
+          }
+        } catch (e) {
+          print("Error in one patient query method: $e");
+          // Continue to next method
+        }
+      }
+
+      // If we still don't have patient info, try direct lookup with the patient's email
+      if (!patientFound) {
+        try {
+          DocumentSnapshot directPatientDoc = await _firestore.collection('Patient').doc(patientEmail).get();
+          if (directPatientDoc.exists) {
+            Map<String, dynamic> patientData = directPatientDoc.data() as Map<String, dynamic>;
+            _extractAndPopulatePatientData(patientData, appointmentData);
+            print("Found patient via direct doc lookup: ${appointmentData["name"]}");
+          }
+        } catch (e) {
+          print("Error in direct patient doc lookup: $e");
+        }
+      }
+    } catch (e) {
+      print("Error fetching patient data by email: $e");
+      print(StackTrace.current);
+    }
+  }
+
+  // Helper method to fetch patient details by contact number
+  Future<void> _fetchPatientDetailsByContact(String contactNumber, Map<String, dynamic> appointmentData) async {
+    try {
+      // Try multiple paths to find patient data by contact
+      List<Future<QuerySnapshot>> patientQueries = [
+        _firestore.collection('Patient')
+            .where('contactNumber No.', isEqualTo: contactNumber)
+            .limit(1)
+            .get(),
+
+        _firestore.collection('Patient')
+            .where('phoneNumber', isEqualTo: contactNumber)
+            .limit(1)
+            .get(),
+
+        _firestore.collection('Patient')
+            .where('phone', isEqualTo: contactNumber)
+            .limit(1)
+            .get(),
+
+        _firestore.collection('Patient')
+            .where('contact', isEqualTo: contactNumber)
+            .limit(1)
+            .get(),
+
+        _firestore.collection('patients')
+            .where('phoneNumber', isEqualTo: contactNumber)
+            .limit(1)
+            .get(),
+
+        _firestore.collection('patients')
+            .where('phone', isEqualTo: contactNumber)
+            .limit(1)
+            .get(),
+      ];
+
+      for (var patientQueryFuture in patientQueries) {
+        try {
+          QuerySnapshot patientSnapshot = await patientQueryFuture;
+
+          if (patientSnapshot.docs.isNotEmpty) {
+            Map<String, dynamic> patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
+            _extractAndPopulatePatientData(patientData, appointmentData);
+            print("Found patient via contact number: ${appointmentData["name"]}");
+            break;  // Exit loop once we find patient data
+          }
+        } catch (e) {
+          print("Error in patient contact query method: $e");
+          // Continue to next method
+        }
+      }
+    } catch (e) {
+      print("Error fetching patient data by contact: $e");
+    }
+  }
+
+  // Helper to extract all patient data fields and put them in the appointment data
+  void _extractAndPopulatePatientData(Map<String, dynamic> patientData, Map<String, dynamic> appointmentData) {
+    // Basic patient info
+    String patientName = (patientData['name'] ?? 
+                        patientData['fullName'] ?? 
+                        patientData['Name'] ?? 
+                        appointmentData["name"]).toString();
+                        
+    String patientContact = (patientData['contactNumber No.'] ?? 
+                          patientData['phone'] ?? 
+                          patientData['phoneNumber'] ?? 
+                          patientData['contact'] ?? 
+                          patientData['contactNo'] ?? 
+                          appointmentData["contact"]).toString();
+    
+    // Update basic info
+    appointmentData["name"] = patientName;
+    appointmentData["contact"] = patientContact;
+    
+    // Extract and add additional patient information
+    appointmentData["patientData"] = {};
+    
+    // Age/birthdate information
+    if (patientData['age'] != null) {
+      appointmentData["patientData"]["age"] = patientData['age'];
+    }
+    
+    if (patientData['dateOfBirth'] != null || patientData['dob'] != null) {
+      appointmentData["patientData"]["dob"] = patientData['dateOfBirth'] ?? patientData['dob'];
+    }
+    
+    // Gender information
+    if (patientData['gender'] != null) {
+      appointmentData["patientData"]["gender"] = patientData['gender'];
+    }
+    
+    // Address information
+    String address = (patientData['address'] ?? 
+                    patientData['Address'] ?? '').toString();
+                    
+    if (address.isNotEmpty) {
+      appointmentData["patientData"]["address"] = address;
+    }
+    
+    // Any available medical information
+    if (patientData['bloodGroup'] != null) {
+      appointmentData["patientData"]["bloodGroup"] = patientData['bloodGroup'];
+    }
+    
+    if (patientData['allergies'] != null) {
+      appointmentData["patientData"]["allergies"] = patientData['allergies'];
+    }
+    
+    if (patientData['medicalHistory'] != null) {
+      appointmentData["patientData"]["medicalHistory"] = patientData['medicalHistory'];
+    }
+    
+    // Secondary contact information
+    if (patientData['emergencyContact'] != null) {
+      appointmentData["patientData"]["emergencyContact"] = patientData['emergencyContact'];
+    }
+    
+    if (patientData['email'] != null && appointmentData["patientEmail"] == '') {
+      appointmentData["patientEmail"] = patientData['email'];
     }
   }
 
@@ -592,20 +761,20 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       try {
         // Get appointment ID
         String appointmentId = appointments[day]![index]["id"];
-        print("Marking appointment $appointmentId as completed");
-
+        print("Marking appointment $appointmentId as done");
+  
         // Update Status field in Appointment collection
         try {
           await _firestore
               .collection('Appointment')
               .doc(appointmentId)
               .update({
-                'Status': "Completed"
+                'Status': "Done"
               });
-          print("Updated Status to Completed in Appointment collection");
+          print("Updated Status to Done in Appointment collection");
         } catch (e) {
           print("Error updating in Appointment collection: $e");
-          
+  
           // Try updating in Bookings/Appointment collection
           try {
             await _firestore
@@ -614,50 +783,65 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                 .collection('Appointment')
                 .doc(appointmentId)
                 .update({
-                  'Status': "Completed"
+                  'Status': "Done"
                 });
-            print("Updated Status to Completed in Bookings/Appointment collection");
+            print("Updated Status to Done in Bookings/Appointment collection");
           } catch (e2) {
             print("Error updating in Bookings/Appointment collection: $e2");
-            
+  
             // If both fail, we need to find where this appointment actually is
             print("Couldn't update appointment status. Please check the collection structure.");
           }
         }
-
+  
         // Get patient details
         var patient = appointments[day]![index];
-
-        // Create record in Records collection
+  
+        // Create record in Records collection with more details
         await _firestore.collection('Records').add({
           'email': patient["patientEmail"],
           'FileName': '/xyz/file',
           'DoctorId': doctorId,
           'date': DateFormat('yyyy-MM-dd').format(DateTime.now()),
-          'diagnosis': 'General Checkup',
+          'diagnosis': patient["reason"] ?? 'General Checkup',
+          'patientName': patient["name"],
+          'patientContact': patient["contact"],
+          'appointmentTime': patient["time"],
+          'clinicName': patient["clinicName"] ?? '',
+          'location': patient["location"] ?? '',
+          'completedDate': DateFormat('MMM dd, yyyy').format(DateTime.now()),
+          'status': "Done" // Add status field with "Done"
         });
         print("Added record to Records collection");
-
+  
         setState(() {
           // Remove from appointments
           var completedAppointment = appointments[day]!.removeAt(index);
-
-          // Add to history
+  
+          // Add to history with extended information
           patientHistory.add({
-            "name": completedAppointment["name"], 
-            "contact": completedAppointment["contact"], 
-            "illness": "General Checkup"
+            "name": completedAppointment["name"],
+            "contact": completedAppointment["contact"],
+            "illness": completedAppointment["reason"] ?? "General Checkup",
+            "date": completedAppointment["date"],
+            "time": completedAppointment["time"],
+            "clinicName": completedAppointment["clinicName"] ?? "",
+            "location": completedAppointment["location"] ?? "",
+            "patientEmail": completedAppointment["patientEmail"] ?? "",
+            "doctorContact": completedAppointment["doctorContact"] ?? "",
+            "completedDate": DateFormat('MMM dd, yyyy').format(DateTime.now()),
+            "status": "Done" // Add status field with "Done"
           });
         });
         print("Updated local state");
-
+  
       } catch (e) {
         print("Error updating appointment status: $e");
         print(StackTrace.current); // Print stack trace for debugging
       }
     }
   }
-
+  
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -705,6 +889,86 @@ class HomeScreen extends StatelessWidget {
     required this.refreshAppointments
   });
 
+  void _showAppointmentDetails(BuildContext context, Map<String, dynamic> appointment) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        padding: EdgeInsets.all(16),
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Appointment Details', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Divider(),
+              _detailRow('Patient Name', appointment["name"]),
+              _detailRow('Patient Contact', appointment["contact"]),
+              _detailRow('Doctor Contact', appointment["doctorContact"] != "Unknown" ? appointment["doctorContact"] : "N/A"),
+              _detailRow('Date', appointment["date"]),
+              _detailRow('Time', appointment["time"]),
+              _detailRow('Clinic', appointment["clinicName"] ?? "N/A"),
+              _detailRow('Location', appointment["location"] ?? "N/A"),
+              _detailRow('Specialization', appointment["specialization"] ?? "N/A"),
+              _detailRow('Reason', appointment["reason"] ?? "General Checkup"),
+              _detailRow('Booked On', appointment["bookedOn"] ?? "N/A"),
+
+              // Show patient data if available
+              if (appointment["patientData"] != null && appointment["patientData"] is Map) ...[
+                SizedBox(height: 20),
+                Text('Patient Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Divider(),
+                if (appointment["patientData"]["age"] != null)
+                  _detailRow('Age', appointment["patientData"]["age"].toString()),
+                if (appointment["patientData"]["dob"] != null)
+                  _detailRow('Date of Birth', appointment["patientData"]["dob"].toString()),
+                if (appointment["patientData"]["gender"] != null)
+                  _detailRow('Gender', appointment["patientData"]["gender"].toString()),
+                if (appointment["patientData"]["bloodGroup"] != null)
+                  _detailRow('Blood Group', appointment["patientData"]["bloodGroup"].toString()),
+                if (appointment["patientData"]["allergies"] != null)
+                  _detailRow('Allergies', appointment["patientData"]["allergies"].toString()),
+              ],
+
+              SizedBox(height: 30),
+              Center(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('Close'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(
+            child: Text(value),
+          ),
+        ],
+      ),
+    );
+  }
+  
   @override
   Widget build(BuildContext context) {
     int totalAppointments = appointments["Today"]!.length + 
@@ -800,6 +1064,7 @@ class HomeScreen extends StatelessWidget {
                               child: Padding(
                                 padding: EdgeInsets.symmetric(vertical: 8.0),
                                 child: ListTile(
+                                  onTap: () => _showAppointmentDetails(context, appointment),
                                   title: Text(
                                     appointment["name"]!,
                                     style: TextStyle(fontWeight: FontWeight.bold),
@@ -878,9 +1143,38 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-class PatientHistoryScreen extends StatelessWidget {
+class PatientHistoryScreen extends StatefulWidget {
   final List<Map<String, dynamic>> patientHistory;
   PatientHistoryScreen({required this.patientHistory});
+
+  @override
+  _PatientHistoryScreenState createState() => _PatientHistoryScreenState();
+}
+
+class _PatientHistoryScreenState extends State<PatientHistoryScreen> {
+  String _searchQuery = '';
+  List<Map<String, dynamic>> _filteredHistory = [];
+  
+  @override
+  void initState() {
+    super.initState();
+    _filteredHistory = widget.patientHistory;
+  }
+  
+  void _filterHistory(String query) {
+    setState(() {
+      _searchQuery = query.toLowerCase();
+      if (_searchQuery.isEmpty) {
+        _filteredHistory = widget.patientHistory;
+      } else {
+        _filteredHistory = widget.patientHistory.where((patient) {
+          return patient["name"].toString().toLowerCase().contains(_searchQuery) ||
+                 patient["contact"].toString().toLowerCase().contains(_searchQuery) ||
+                 patient["illness"].toString().toLowerCase().contains(_searchQuery);
+        }).toList();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -890,21 +1184,242 @@ class PatientHistoryScreen extends StatelessWidget {
         backgroundColor: Colors.teal,
         centerTitle: true,
       ),
-      body: patientHistory.isEmpty
-          ? Center(child: Text("No patient history available"))
-          : ListView.builder(
-              itemCount: patientHistory.length,
-              itemBuilder: (context, index) {
-                final patient = patientHistory[index];
-                return Card(
-                  child: ListTile(
-                    title: Text(patient["name"]!),
-                    subtitle: Text('Contact: ${patient["contact"]}\nIllness: ${patient["illness"]}'),
-                    trailing: Icon(Icons.check_circle, color: Colors.green, size: 28),
-                  ),
-                );
-              },
+      body: Column(
+        children: [
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: TextField(
+              onChanged: _filterHistory,
+              decoration: InputDecoration(
+                hintText: 'Search patients...',
+                prefixIcon: Icon(Icons.search, color: Colors.teal),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.teal),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.teal, width: 2),
+                ),
+              ),
             ),
+          ),
+          
+          // History count
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Row(
+              children: [
+                Text(
+                  'Total Records: ${_filteredHistory.length}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold, 
+                    color: Colors.teal[700]
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // History list
+          Expanded(
+            child: _filteredHistory.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.history, size: 64, color: Colors.grey),
+                        SizedBox(height: 16),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? "No patient history available"
+                              : "No results found for '$_searchQuery'",
+                          style: TextStyle(
+                            fontSize: 16, 
+                            color: Colors.grey[700]
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _filteredHistory.length,
+                    itemBuilder: (context, index) {
+                      final patient = _filteredHistory[index];
+                      return _buildPatientHistoryCard(patient);
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildPatientHistoryCard(Map<String, dynamic> patient) {
+    // Format date - if available
+    String formattedDate = "N/A";
+    if (patient.containsKey("date") && patient["date"] != null) {
+      try {
+        // Try to parse and format the date
+        DateTime appointmentDate = DateTime.parse(patient["date"].toString());
+        formattedDate = DateFormat('MMM dd, yyyy').format(appointmentDate);
+      } catch (e) {
+        // If parsing fails, use the original string
+        formattedDate = patient["date"].toString();
+      }
+    } else if (patient.containsKey("completedDate") && patient["completedDate"] != null) {
+      formattedDate = patient["completedDate"].toString();
+    }
+    
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CircleAvatar(
+          backgroundColor: Colors.teal,
+          child: Icon(Icons.person, color: Colors.white),
+        ),
+        title: Text(
+          patient["name"] ?? "Unknown Patient",
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.calendar_today, size: 14, color: Colors.teal),
+                SizedBox(width: 4),
+                Text('Date: $formattedDate'),
+              ],
+            ),
+            SizedBox(height: 2),
+            Row(
+              children: [
+                Icon(Icons.medical_services, size: 14, color: Colors.teal),
+                SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Diagnosis: ${patient["illness"] ?? "General Checkup"}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        trailing: Container(
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.green[100],
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            'Completed',
+            style: TextStyle(
+              color: Colors.green[800],
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+        ),
+        children: [
+          // Expanded details section
+          Container(
+            padding: EdgeInsets.all(16),
+            color: Colors.grey[50],
+            child: Column(
+              children: [
+                _detailRow('Patient Name', patient["name"] ?? "Unknown"),
+                _detailRow('Contact Number', patient["contact"] ?? "N/A"),
+                _detailRow('Diagnosis/Illness', patient["illness"] ?? "General Checkup"),
+                _detailRow('Date', formattedDate),
+                
+                // Show additional details if available
+                if (patient.containsKey("time"))
+                  _detailRow('Time', patient["time"] ?? "N/A"),
+                if (patient.containsKey("patientEmail"))
+                  _detailRow('Email', patient["patientEmail"] ?? "N/A"),
+                if (patient.containsKey("reason"))
+                  _detailRow('Reason', patient["reason"] ?? "N/A"),
+                if (patient.containsKey("clinicName"))
+                  _detailRow('Clinic', patient["clinicName"] ?? "N/A"),
+                if (patient.containsKey("location"))
+                  _detailRow('Location', patient["location"] ?? "N/A"),
+                if (patient.containsKey("doctorContact"))
+                  _detailRow('Doctor Contact', patient["doctorContact"] ?? "N/A"),
+                  
+                // Show prescription or notes if available
+                if (patient.containsKey("prescription") || patient.containsKey("notes"))
+                  Divider(height: 24),
+                  
+                if (patient.containsKey("prescription"))
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Prescription:", style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 4),
+                      Container(
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: Text(patient["prescription"] ?? ""),
+                      ),
+                    ],
+                  ),
+                  
+                if (patient.containsKey("notes"))
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(height: 12),
+                      Text("Notes:", style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 4),
+                      Container(
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: Text(patient["notes"] ?? ""),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[700]),
+            ),
+          ),
+          Expanded(
+            child: Text(value),
+          ),
+        ],
+      ),
     );
   }
 }

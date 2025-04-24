@@ -7,6 +7,9 @@ import 'patient_profile_screen.dart';
 import '..//patient/doctor_clinic_details.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import '..//patient/AppointmentHistoryScreen.dart';
+// Add these imports at the top of your files
+import 'package:intl/intl.dart';  // For date formatting
 
 class PatientDashboard extends StatefulWidget {
   final String? patientProfileImage;
@@ -21,6 +24,8 @@ class PatientDashboard extends StatefulWidget {
 class _PatientDashboardState extends State<PatientDashboard> {
   final FirebaseServices _firebaseServices = FirebaseServices();
   List<Map<String, dynamic>> doctors = [];
+  List<Map<String, dynamic>> filteredDoctors = []; // For search results
+  String searchQuery = ""; // To store search query
   String patientName = "Patient";
   String patientAddress = "";
   String patientAge = "";
@@ -30,6 +35,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
   String patientEmail = "";
   String userId = "";
   bool isLoading = true;
+  int recentAppointmentsCount = 0;
 
   @override
   void initState() {
@@ -48,6 +54,8 @@ class _PatientDashboardState extends State<PatientDashboard> {
       });
       
       await _loadData();
+      // Check for recent appointments
+      await _checkRecentAppointments();
     } else {
       // User not logged in, try using the email passed to widget
       if (widget.patientEmail != null) {
@@ -55,6 +63,8 @@ class _PatientDashboardState extends State<PatientDashboard> {
           patientEmail = widget.patientEmail!;
         });
         await _loadData();
+        // Check for recent appointments
+        await _checkRecentAppointments();
       } else {
         setState(() {
           isLoading = false;
@@ -68,6 +78,29 @@ class _PatientDashboardState extends State<PatientDashboard> {
           textColor: Colors.white,
         );
       }
+    }
+  }
+
+  // Method to check recent appointments for notification badge
+  Future<void> _checkRecentAppointments() async {
+    try {
+      if (patientEmail.isEmpty) return;
+      
+      // Calculate date 2 days ago
+      DateTime twoDaysAgo = DateTime.now().subtract(Duration(days: 2));
+      
+      // Query Firestore for recent appointments
+      QuerySnapshot appointmentsSnapshot = await FirebaseFirestore.instance
+          .collection('appointments')
+          .where('patientEmail', isEqualTo: patientEmail)
+          .where('bookingDate', isGreaterThanOrEqualTo: Timestamp.fromDate(twoDaysAgo))
+          .get();
+      
+      setState(() {
+        recentAppointmentsCount = appointmentsSnapshot.docs.length;
+      });
+    } catch (e) {
+      print('Error checking recent appointments: $e');
     }
   }
 
@@ -200,6 +233,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
       
       setState(() {
         doctors = doctorsList;
+        filteredDoctors = doctorsList; // Initialize filtered list with all doctors
         isLoading = false;
       });
       
@@ -219,6 +253,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
             },
             // Other default doctors...
           ];
+          filteredDoctors = doctors; // Also update filtered list
         });
       }
     } catch (e) {
@@ -254,7 +289,35 @@ class _PatientDashboardState extends State<PatientDashboard> {
       }
     }
     return defaultValue;
-  }    
+  }
+  
+  // Search functionality
+  void _filterDoctors(String query) {
+    setState(() {
+      searchQuery = query;
+      if (query.isEmpty) {
+        // If search query is empty, show all doctors
+        filteredDoctors = doctors;
+      } else {
+        // Convert query to lowercase for case-insensitive search
+        String lowercaseQuery = query.toLowerCase();
+        
+        // Filter doctors based on name, specialty, or location
+        filteredDoctors = doctors.where((doctor) {
+          String name = doctor['name']?.toString().toLowerCase() ?? '';
+          String specialty = doctor['specialty']?.toString().toLowerCase() ?? '';
+          String location = doctor['location']?.toString().toLowerCase() ?? '';
+          String clinicName = doctor['clinicName']?.toString().toLowerCase() ?? '';
+          
+          // Return true if query appears in any of these fields
+          return name.contains(lowercaseQuery) || 
+                specialty.contains(lowercaseQuery) || 
+                location.contains(lowercaseQuery) ||
+                clinicName.contains(lowercaseQuery);
+        }).toList();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -263,19 +326,52 @@ class _PatientDashboardState extends State<PatientDashboard> {
         title: Text('MedSlots', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: Colors.teal,
         actions: [
-          IconButton(
-            icon: Icon(Icons.notifications, color: Colors.white),
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
-              String? latestBooking = prefs.getString("latest_booking");
-              Fluttertoast.showToast(
-                msg: latestBooking ?? "No recent bookings",
-                toastLength: Toast.LENGTH_LONG,
-                gravity: ToastGravity.TOP,
-                backgroundColor: Colors.blue,
-                textColor: Colors.white,
-              );
-            },
+          Stack(
+            alignment: Alignment.topRight,
+            children: [
+              IconButton(
+                icon: Icon(Icons.notifications, color: Colors.white),
+                onPressed: () {
+                  // Navigate to AppointmentHistoryScreen to view recent appointments
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AppointmentHistoryScreen(
+                        patientEmail: patientEmail,
+                        recentOnly: true,
+                      ),
+                    ),
+                  ).then((_) {
+                    // Refresh notification count when returning from the screen
+                    _checkRecentAppointments();
+                  });
+                },
+              ),
+              if (recentAppointmentsCount > 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    constraints: BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      '$recentAppointmentsCount',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -347,12 +443,12 @@ class _PatientDashboardState extends State<PatientDashboard> {
             ),
           ),
           
-          // Search bar
+          // Search bar - Updated with filter functionality
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: TextField(
               decoration: InputDecoration(
-                hintText: 'Search doctors...',
+                hintText: 'Search doctors by name, specialty, or location...',
                 prefixIcon: Icon(Icons.search, color: Colors.teal),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(25),
@@ -362,10 +458,18 @@ class _PatientDashboardState extends State<PatientDashboard> {
                   borderRadius: BorderRadius.circular(25),
                   borderSide: BorderSide(color: Colors.teal, width: 2),
                 ),
+                suffixIcon: searchQuery.isNotEmpty 
+                  ? IconButton(
+                      icon: Icon(Icons.clear, color: Colors.grey),
+                      onPressed: () {
+                        // Clear search
+                        _filterDoctors('');
+                        FocusScope.of(context).unfocus();
+                      },
+                    )
+                  : null,
               ),
-              onChanged: (value) {
-                // Filter doctors based on search (not implemented yet)
-              },
+              onChanged: _filterDoctors,
             ),
           ),
           
@@ -376,7 +480,9 @@ class _PatientDashboardState extends State<PatientDashboard> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Available Doctors',
+                  filteredDoctors.length != doctors.length 
+                    ? 'Found ${filteredDoctors.length} doctors'
+                    : 'Available Doctors',
                   style: TextStyle(
                     fontSize: 18, 
                     fontWeight: FontWeight.bold, 
@@ -384,7 +490,12 @@ class _PatientDashboardState extends State<PatientDashboard> {
                   ),
                 ),
                 TextButton(
-                  onPressed: _loadData,
+                  onPressed: () {
+                    _loadData();
+                    _checkRecentAppointments();
+                    // Clear search when refreshing
+                    _filterDoctors('');
+                  },
                   child: Text('Refresh', style: TextStyle(color: Colors.teal)),
                 ),
               ],
@@ -394,12 +505,31 @@ class _PatientDashboardState extends State<PatientDashboard> {
           Expanded(
             child: isLoading 
             ? Center(child: CircularProgressIndicator(color: Colors.teal))
-            : doctors.isEmpty 
-            ? Center(child: Text('No doctors available'))
+            : filteredDoctors.isEmpty 
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.search_off, size: 48, color: Colors.grey),
+                    SizedBox(height: 16),
+                    Text(
+                      searchQuery.isEmpty 
+                        ? 'No doctors available' 
+                        : 'No doctors found matching "$searchQuery"',
+                      style: TextStyle(fontSize: 16, color: Colors.grey.shade700),
+                    ),
+                    if (searchQuery.isNotEmpty)
+                      TextButton(
+                        onPressed: () => _filterDoctors(''),
+                        child: Text('Clear Search', style: TextStyle(color: Colors.teal)),
+                      )
+                  ],
+                ),
+              )
             : ListView.builder(
-              itemCount: doctors.length,
+              itemCount: filteredDoctors.length,
               itemBuilder: (context, index) {
-                final doctor = doctors[index];
+                final doctor = filteredDoctors[index];
                 final bool isBookingEnabled = doctor['bookingEnabled'] ?? true;
 
                 return Card(
