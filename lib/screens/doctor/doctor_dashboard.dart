@@ -133,12 +133,13 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     }
   }
 
+  
   Future<void> _fetchAppointments() async {
     try {
       setState(() {
         isLoading = true;
       });
-  
+
       // Reset the appointments
       setState(() {
         appointments = {
@@ -147,111 +148,132 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
           "Day After Tomorrow": [],
         };
       });
-  
+
       // Get doctor information for matching
       String doctorEmail = (doctorData['email'] ?? _auth.currentUser?.email ?? '').toString().toLowerCase().trim();
       String doctorName = (doctorData['fullName'] ?? doctorData['name'] ?? '').toString().trim();
-      
+
       print("Fetching appointments for doctor: Email=$doctorEmail, Name=$doctorName, ID=$doctorId");
-  
+
       // Prepare dates for filtering
       DateTime now = DateTime.now();
       String todayDate = DateFormat('yyyy-MM-dd').format(now);
       String tomorrowDate = DateFormat('yyyy-MM-dd').format(now.add(Duration(days: 1)));
       String dayAfterTomorrowDate = DateFormat('yyyy-MM-dd').format(now.add(Duration(days: 2)));
-      
-      // Alternative date formats that might be used in the database
-      List<String> todayFormats = _generateDateFormats(now);
-      List<String> tomorrowFormats = _generateDateFormats(now.add(Duration(days: 1)));
-      List<String> dayAfterFormats = _generateDateFormats(now.add(Duration(days: 2)));
-      
-      print("Looking for dates: Today=$todayFormats, Tomorrow=$tomorrowFormats, DayAfter=$dayAfterFormats");
-  
+
+      print("Looking for dates: Today=$todayDate, Tomorrow=$tomorrowDate, DayAfter=$dayAfterTomorrowDate");
+
       // Build a comprehensive list of collections to query
       List<Future<QuerySnapshot>> queries = [];
-      
+
       // 1. Check Appointment collection
       queries.add(_firestore.collection('Appointment').get());
-      
+
       // 2. Check Bookings/Appointment collection
       queries.add(_firestore.collection('Bookings')
           .doc('Appointment')
           .collection('Appointment')
           .get());
-      
-      // 3. Check Doctor's BookedSlots collection
+
+      // 3. Check Doctor's BookedSlots collection if doctorEmail exists
       if (doctorEmail.isNotEmpty) {
         queries.add(_firestore.collection('Doctor')
             .doc(doctorEmail)
             .collection('BookedSlots')
             .get());
-            
-        // 4. Check alternate casing of email
-        queries.add(_firestore.collection('Doctor')
-            .doc(doctorEmail.toLowerCase())
-            .collection('BookedSlots')
+      }
+
+      // 4. Check doctors collection with doctorId if available
+      if (doctorId.isNotEmpty) {
+        queries.add(_firestore.collection('doctors')
+            .doc(doctorId)
+            .collection('appointments')
             .get());
       }
-      
-      // 5. Check doctor's appointments collection if it exists
-      queries.add(_firestore.collection('doctors')
-          .doc(doctorId)
-          .collection('appointments')
-          .get());
-      
+
+      // 5. Check global appointments collection
+      queries.add(_firestore.collection('appointments').get());
+
       // Execute all queries in parallel
       List<QuerySnapshot> queryResults = await Future.wait(queries);
-      
+
       // Process each query result
       List<Map<String, dynamic>> allAppointments = [];
-      
+
       for (var querySnapshot in queryResults) {
+        // Print collection path for debugging
+        print("Processing collection with ${querySnapshot.docs.length} documents");
+
         // Filter for this doctor and extract appointment data
         for (var doc in querySnapshot.docs) {
           try {
             Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-            
+
+            // Print raw document data for debugging
+            print("Examining document: ${doc.id}");
+            print("Document data: $data");
+
             // Try to match this appointment to the current doctor
             bool isForThisDoctor = _isAppointmentForDoctor(data, doctorEmail, doctorName, doctorId);
-            
+
             if (isForThisDoctor) {
               print("Found matching appointment: ${doc.id}");
-              
+
               // Create standardized appointment data
               Map<String, dynamic> appointmentData = await _createAppointmentData(doc.id, data);
-              
+
               // Check if this appointment belongs to any of our date categories
               String appointmentDate = appointmentData["date"];
-              String category = _determineDateCategory(
-                appointmentDate, 
-                todayFormats, 
-                tomorrowFormats, 
-                dayAfterFormats
-              );
-              
+
+              // Determine which category this belongs to
+              String category = "";
+              if (appointmentDate == todayDate) {
+                category = "Today";
+              } else if (appointmentDate == tomorrowDate) {
+                category = "Tomorrow";
+              } else if (appointmentDate == dayAfterTomorrowDate) {
+                category = "Day After Tomorrow";
+              } else {
+                // Try with more flexible date parsing
+                DateTime? parsedDate = _tryParseDate(appointmentDate);
+                if (parsedDate != null) {
+                  String formattedParsedDate = DateFormat('yyyy-MM-dd').format(parsedDate);
+                  if (formattedParsedDate == todayDate) {
+                    category = "Today";
+                  } else if (formattedParsedDate == tomorrowDate) {
+                    category = "Tomorrow";
+                  } else if (formattedParsedDate == dayAfterTomorrowDate) {
+                    category = "Day After Tomorrow";
+                  }
+                }
+              }
+
               if (category.isNotEmpty) {
                 allAppointments.add({...appointmentData, "category": category});
                 print("Added appointment to $category category: ${appointmentData["patientEmail"]}");
               } else {
                 print("Appointment date doesn't match any category: $appointmentDate");
               }
+            } else {
+              print("Appointment not for this doctor");
             }
           } catch (e) {
             print("Error processing appointment doc: $e");
+            print(StackTrace.current);
           }
         }
       }
-      
+
       // Now organize all found appointments into their respective categories
       for (var appointment in allAppointments) {
         String category = appointment["category"];
         appointment.remove("category"); // Remove the temporary category field
-        
+
         setState(() {
           appointments[category]!.add(appointment);
         });
       }
-  
+
       print("Final appointment counts - Today: ${appointments['Today']!.length}, Tomorrow: ${appointments['Tomorrow']!.length}, Day After: ${appointments['Day After Tomorrow']!.length}");
     } catch (e) {
       print("Error fetching appointments: $e");
@@ -262,27 +284,23 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       });
     }
   }
-  
-  // Helper: Generate different date format variations
-  List<String> _generateDateFormats(DateTime date) {
-    return [
-      DateFormat('yyyy-MM-dd').format(date),
-      DateFormat('dd-MM-yyyy').format(date),
-      DateFormat('MM/dd/yyyy').format(date),
-      DateFormat('dd/MM/yyyy').format(date),
-      DateFormat('yyyy/MM/dd').format(date),
-      DateFormat('d MMMM yyyy').format(date),
-      DateFormat('MMMM d, yyyy').format(date),
-    ];
-  }
-  
+
   // Helper: Check if an appointment belongs to the current doctor
   bool _isAppointmentForDoctor(Map<String, dynamic> data, String doctorEmail, String doctorName, String doctorId) {
     // Check all possible doctor identifier fields with case insensitivity
     String apptDoctorEmail = (data['doctorEmail'] ?? data['DoctorEmail'] ?? '').toString().toLowerCase().trim();
     String apptDoctorName = (data['doctorName'] ?? data['DoctorName'] ?? '').toString().trim();
     String apptDoctorId = (data['doctorId'] ?? data['DoctorId'] ?? '').toString().trim();
-    
+
+    // Additional fields from your example data
+    if (apptDoctorEmail.isEmpty && data.containsKey('doctorEmail')) {
+      apptDoctorEmail = data['doctorEmail'].toString().toLowerCase().trim();
+    }
+
+    if (apptDoctorName.isEmpty && data.containsKey('doctorName')) {
+      apptDoctorName = data['doctorName'].toString().trim();
+    }
+
     // Also check potential nested objects or differently named fields
     if (data['doctor'] is Map) {
       Map<String, dynamic> doctorInfo = data['doctor'];
@@ -296,7 +314,11 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
         apptDoctorId = doctorInfo['id'].toString().trim();
       }
     }
-    
+
+    print("Comparing: App doctor email: '$apptDoctorEmail' with '$doctorEmail'");
+    print("Comparing: App doctor name: '$apptDoctorName' with '$doctorName'");
+    print("Comparing: App doctor ID: '$apptDoctorId' with '$doctorId'");
+
     // More aggressively normalize doctor name/email for matching
     // Check for partial matches in either direction for doctor name
     bool nameMatches = false;
@@ -304,12 +326,25 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       nameMatches = doctorName.toLowerCase().contains(apptDoctorName.toLowerCase()) || 
                     apptDoctorName.toLowerCase().contains(doctorName.toLowerCase());
     }
-    
-    return apptDoctorEmail == doctorEmail || 
-           nameMatches ||
-           apptDoctorId == doctorId;
+
+    bool emailMatches = apptDoctorEmail == doctorEmail;
+    bool idMatches = apptDoctorId == doctorId;
+
+    // Check for case-insensitive matches
+    if (!emailMatches && doctorEmail.isNotEmpty && apptDoctorEmail.isNotEmpty) {
+      emailMatches = doctorEmail.toLowerCase() == apptDoctorEmail.toLowerCase();
+    }
+
+    // In case someone used a display name as email
+    if (!emailMatches && !nameMatches && doctorEmail.isNotEmpty && apptDoctorName.isNotEmpty) {
+      emailMatches = doctorEmail.toLowerCase().contains(apptDoctorName.toLowerCase()) ||
+                    apptDoctorName.toLowerCase().contains(doctorEmail.toLowerCase());
+    }
+
+    print("Match results - Email: $emailMatches, Name: $nameMatches, ID: $idMatches");
+
+    return emailMatches || nameMatches || idMatches;
   }
-  
   // Helper: Determine which date category an appointment belongs to
   String _determineDateCategory(
     String appointmentDate,
@@ -379,6 +414,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     try {
       return DateTime.parse(dateStr);
     } catch (e) {
+      print("Failed to parse date: $dateStr");
       return null;
     }
   }
@@ -390,30 +426,32 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                           data['PatientEmail'] ?? 
                           data['patient_email'] ?? 
                           data['email'] ?? '').toString();
-                          
+
     // Extract appointment time
     String timeSlot = (data['TimeSlot'] ?? 
                       data['timeSlot'] ?? 
                       data['time'] ?? 
                       data['appointmentTime'] ?? "Unknown Time").toString();
-                      
+
     // Extract appointment date
     String date = (data['date'] ?? 
                   data['Date'] ?? 
                   data['appointmentDate'] ?? "").toString();
-                  
+
     // Extract status
     bool isCompleted = (data['Status'] == "Completed" || 
                         data['status'] == "Completed" ||
                         data['Status'] == "completed" ||
                         data['status'] == "completed");
-                        
+
     // Extract clinic name
     String clinicName = (data['ClinicsName'] ?? 
                         data['clinicsName'] ?? 
                         data['clinicName'] ?? 
                         data['ClinicName'] ?? "").toString();
-    
+
+    print("Extracted appointment details - Email: $patientEmail, Time: $timeSlot, Date: $date, Clinic: $clinicName");
+
     // Create appointment data object
     Map<String, dynamic> appointmentData = {
       "id": docId,
@@ -425,7 +463,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       "clinicName": clinicName,
       "patientEmail": patientEmail,
     };
-    
+
     // Try to get patient information
     if (patientEmail.isNotEmpty) {
       try {
@@ -435,27 +473,27 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
               .where('email', isEqualTo: patientEmail)
               .limit(1)
               .get(),
-              
+
           _firestore.collection('patients')
               .where('email', isEqualTo: patientEmail)
               .limit(1)
               .get(),
-              
+
           // If there are other collections that might have patient info, add them here
         ];
-        
+
         for (var patientQueryFuture in patientQueries) {
           QuerySnapshot patientSnapshot = await patientQueryFuture;
-          
+
           if (patientSnapshot.docs.isNotEmpty) {
             Map<String, dynamic> patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
-            
+
             // Try to extract name from multiple possible field names
             String patientName = (patientData['name'] ?? 
                                 patientData['fullName'] ?? 
                                 patientData['Name'] ?? 
                                 "Unknown Patient").toString();
-                                
+
             // Try to extract contact from multiple possible field names
             String patientContact = (patientData['contactNumber No.'] ?? 
                                   patientData['phone'] ?? 
@@ -463,10 +501,10 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                                   patientData['contact'] ?? 
                                   patientData['contactNo'] ?? 
                                   "N/A").toString();
-            
+
             appointmentData["name"] = patientName;
             appointmentData["contact"] = patientContact;
-            
+
             print("Found patient info: $patientName");
             break;  // Exit loop once we find patient data
           }
@@ -480,17 +518,17 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                          data['PatientName'] ?? 
                          data['patient_name'] ?? 
                          "Unknown Patient").toString();
-                         
+
       String patientContact = (data['patientContact'] ?? 
                            data['PatientContact'] ?? 
                            data['patient_contact'] ?? 
                            data['contactNo'] ?? 
                            "Unknown").toString();
-                           
+
       appointmentData["name"] = patientName;
       appointmentData["contact"] = patientContact;
     }
-    
+
     return appointmentData;
   }
 
