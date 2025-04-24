@@ -5,9 +5,6 @@ import 'patient_dashboard.dart';
 import 'upload_report.dart';
 
 class PatientProfileScreen extends StatefulWidget {
-  // We'll fetch data using the current authenticated user
-  // No need to pass email as parameter anymore
-  
   @override
   _PatientProfileScreenState createState() => _PatientProfileScreenState();
 }
@@ -22,16 +19,20 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   
   String _selectedGender = '';
   String _selectedBloodGroup = '';
-  String _userId = ''; // Store current user ID
-  String _userEmail = ''; // Store current user email
+  String _userId = ''; 
+  String _userEmail = '';
 
   // Appointment details
   String _clinicName = "";
   String _status = "";
   String _timeSlot = "";
   String _date = "";
-  bool _isLoading = true; // Start as loading
+  bool _isLoading = true;
+  bool _isEditMode = false; // Flag to control edit/view mode
 
+  // Store original values to detect changes
+  Map<String, dynamic> _originalValues = {};
+  
   final List<String> genderOptions = ['Male', 'Female', 'Other'];
   final List<String> bloodGroups = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
@@ -39,14 +40,14 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   void initState() {
     super.initState();
     
-    // Initialize controllers with empty values first
+    // Initialize controllers
     _nameController = TextEditingController();
     _addressController = TextEditingController();
     _ageController = TextEditingController();
     _contactNumberController = TextEditingController();
     _emailController = TextEditingController();
     
-    // Initialize with default values to prevent dropdown errors
+    // Initialize with default values
     _selectedGender = genderOptions[0];
     _selectedBloodGroup = bloodGroups[0];
 
@@ -65,16 +66,12 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         _emailController.text = _userEmail;
       });
       
-      // Now that we have the user ID, fetch the profile data
       await fetchUserData();
       await fetchAppointmentDetails();
     } else {
-      // User not logged in, handle this case (e.g., navigate to login)
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('User not authenticated. Please login again.'))
       );
-      // Navigate back to login screen
-      // You can add navigation code here
     }
   }
 
@@ -85,7 +82,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     });
     
     try {
-      // First try to fetch from 'patients' collection (as used in registration)
+      // First try to fetch from 'patients' collection
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('patients')
           .doc(_userId)
@@ -95,25 +92,22 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
         
         setState(() {
-          // Update text controllers with data from registration
           _nameController.text = userData['fullName'] ?? '';
           _contactNumberController.text = userData['contactNumber'] ?? '';
-          
-          // These fields may not exist in a new user profile
           _addressController.text = userData['address'] ?? '';
           _ageController.text = (userData['age'] ?? '').toString();
           
-          // Make sure gender exists in our options
           String fetchedGender = userData['gender'] ?? '';
           _selectedGender = genderOptions.contains(fetchedGender) ? fetchedGender : genderOptions[0];
           
-          // Make sure blood group exists in our options
           String fetchedBloodGroup = userData['bloodGroup'] ?? '';
           _selectedBloodGroup = bloodGroups.contains(fetchedBloodGroup) ? fetchedBloodGroup : bloodGroups[0];
+          
+          // Store original values
+          _storeOriginalValues();
         });
       } else {
-        // If not found in 'patients', try the 'Patient' collection
-        // This is a fallback for existing users who might have data in the old path
+        // If not found, try the 'Patient' collection
         userDoc = await FirebaseFirestore.instance
             .collection('Patient')
             .doc(_userEmail)
@@ -133,13 +127,18 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
             
             String fetchedBloodGroup = userData['bloodGroup'] ?? '';
             _selectedBloodGroup = bloodGroups.contains(fetchedBloodGroup) ? fetchedBloodGroup : bloodGroups[0];
+            
+            // Store original values
+            _storeOriginalValues();
           });
         } else {
           print("User document does not exist in Firestore");
-          // Create empty profile for new users
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('New profile created. Please add your details.'))
           );
+          setState(() {
+            _isEditMode = true; // Auto-enable edit mode for new users
+          });
         }
       }
     } catch (e) {
@@ -154,9 +153,21 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     }
   }
 
+  // Store original values to detect changes
+  void _storeOriginalValues() {
+    _originalValues = {
+      'name': _nameController.text,
+      'address': _addressController.text,
+      'age': _ageController.text,
+      'contactNumber': _contactNumberController.text,
+      'gender': _selectedGender,
+      'bloodGroup': _selectedBloodGroup,
+    };
+  }
+
   Future<void> fetchAppointmentDetails() async {
     try {
-      // First try 'patients' collection path (new structure)
+      // First try 'patients' collection path
       QuerySnapshot appointmentQuery = await FirebaseFirestore.instance
           .collection('patients')
           .doc(_userId)
@@ -177,7 +188,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
           _date = appointmentData['date'] ?? _formatDate(appointmentData['appointmentDate']);
         });
       } else {
-        // Try the old path structure with email as ID
+        // Try the old path structure
         DocumentSnapshot appointmentDoc = await FirebaseFirestore.instance
             .collection('Patient')
             .doc(_userEmail)
@@ -222,7 +233,6 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     }
   }
   
-  // Helper method to format Timestamp
   String _formatTimestamp(dynamic timestamp) {
     if (timestamp == null) return "";
     if (timestamp is Timestamp) {
@@ -232,7 +242,6 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     return timestamp.toString();
   }
   
-  // Helper method to format DateTime
   String _formatDate(dynamic date) {
     if (date == null) return "";
     if (date is DateTime) {
@@ -250,7 +259,6 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     });
     
     try {
-      // Prepare the data to update
       Map<String, dynamic> updateData = {
         'fullName': _nameController.text,
         'name': _nameController.text, // Add both keys for compatibility
@@ -263,17 +271,22 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       };
       
       // Update in both possible locations for compatibility
-      // 1. Update in 'patients' collection with UID as document ID
       await FirebaseFirestore.instance
           .collection('patients')
           .doc(_userId)
           .set(updateData, SetOptions(merge: true));
       
-      // 2. Update in 'Patient' collection with email as document ID for backwards compatibility
       await FirebaseFirestore.instance
           .collection('Patient')
           .doc(_userEmail)
           .set(updateData, SetOptions(merge: true));
+      
+      // Update original values after successful save
+      _storeOriginalValues();
+      
+      setState(() {
+        _isEditMode = false; // Exit edit mode after saving
+      });
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Profile updated successfully!'))
@@ -290,6 +303,21 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     }
   }
 
+  // Method to cancel editing and revert changes
+  void _cancelEditing() {
+    setState(() {
+      // Restore original values
+      _nameController.text = _originalValues['name'] ?? '';
+      _addressController.text = _originalValues['address'] ?? '';
+      _ageController.text = _originalValues['age'] ?? '';
+      _contactNumberController.text = _originalValues['contactNumber'] ?? '';
+      _selectedGender = _originalValues['gender'] ?? genderOptions[0];
+      _selectedBloodGroup = _originalValues['bloodGroup'] ?? bloodGroups[0];
+      
+      _isEditMode = false; // Exit edit mode
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -298,6 +326,18 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         backgroundColor: Colors.teal,
         elevation: 0,
         iconTheme: IconThemeData(color: Colors.white),
+        actions: [
+          if (!_isLoading && !_isEditMode)
+            IconButton(
+              icon: Icon(Icons.edit, color: Colors.white),
+              onPressed: () {
+                setState(() {
+                  _isEditMode = true;
+                });
+              },
+              tooltip: 'Edit Profile',
+            ),
+        ],
       ),
       body: _isLoading 
         ? Center(child: CircularProgressIndicator(color: Colors.teal))
@@ -323,205 +363,79 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                     ),
                   ),
                   SizedBox(height: 30),
-                  TextField(
-                    controller: _nameController,
-                    decoration: InputDecoration(
-                      labelText: 'Full Name',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 15),
-                  TextField(
-                    controller: _addressController,
-                    decoration: InputDecoration(
-                      labelText: 'Address',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 15),
-                  TextField(
-                    controller: _ageController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: 'Age',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 15),
-                  // Fixed dropdown for gender
-                  DropdownButtonFormField<String>(
-                    value: _selectedGender,
-                    items: genderOptions.map((gender) {
-                      return DropdownMenuItem(
-                        value: gender,
-                        child: Text(gender),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _selectedGender = value;
-                        });
-                      }
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Gender',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 15),
-                  // Fixed dropdown for blood group
-                  DropdownButtonFormField<String>(
-                    value: _selectedBloodGroup,
-                    items: bloodGroups.map((bg) {
-                      return DropdownMenuItem(
-                        value: bg,
-                        child: Text(bg),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _selectedBloodGroup = value;
-                        });
-                      }
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Blood Group',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 15),
-                  TextField(
-                    controller: _contactNumberController,
-                    keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(
-                      labelText: 'Contact Number',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  SizedBox(height: 15),
-                  Container(
-                    padding: EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.3),
-                          spreadRadius: 1,
-                          blurRadius: 3,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Email Address:',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.teal,
-                          ),
-                        ),
-                        SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Icon(Icons.email, color: Colors.teal),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _userEmail,
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 20),
+                  
+                  // Profile information section
+                  _buildProfileInformation(),
                   
                   // Displaying the Booked Appointment
-                  if (_clinicName.isNotEmpty) Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Booked Appointment:',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal),
+                  if (_clinicName.isNotEmpty) ...[
+                    SizedBox(height: 25),
+                    Text(
+                      'Booked Appointment:',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal),
+                    ),
+                    SizedBox(height: 10),
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.grey.withOpacity(0.3),
+                            spreadRadius: 2,
+                            blurRadius: 5,
+                          ),
+                        ],
                       ),
-                      SizedBox(height: 10),
-                      Container(
-                        padding: EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.grey.withOpacity(0.3),
-                              spreadRadius: 2,
-                              blurRadius: 5,
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Clinic Name: $_clinicName', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                            SizedBox(height: 5),
-                            Text('Status: $_status', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                            SizedBox(height: 5),
-                            Text('Time Slot: $_timeSlot', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                            SizedBox(height: 5),
-                            Text('Date: $_date', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                          ],
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Clinic Name: $_clinicName', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                          SizedBox(height: 5),
+                          Text('Status: $_status', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                          SizedBox(height: 5),
+                          Text('Time Slot: $_timeSlot', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                          SizedBox(height: 5),
+                          Text('Date: $_date', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
 
                   SizedBox(height: 30),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : saveChanges,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.teal,
-                        padding: EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                  
+                  // Button section - Only show in edit mode
+                  if (_isEditMode)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton(
+                          onPressed: _isLoading ? null : _cancelEditing,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.grey,
+                            padding: EdgeInsets.symmetric(horizontal: 25, vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: Text('Cancel', style: TextStyle(fontSize: 16)),
                         ),
-                      ),
-                      child: _isLoading 
-                          ? CircularProgressIndicator(color: Colors.white)
-                          : Text('Save Changes', style: TextStyle(fontSize: 16)),
+                        ElevatedButton(
+                          onPressed: _isLoading ? null : saveChanges,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            padding: EdgeInsets.symmetric(horizontal: 25, vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: _isLoading 
+                              ? CircularProgressIndicator(color: Colors.white)
+                              : Text('Save Changes', style: TextStyle(fontSize: 16)),
+                        ),
+                      ],
                     ),
-                  ),
                   SizedBox(height: 20),
                 ],
               ),
@@ -542,8 +456,251 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
           } else if (index == 1) {
             Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => UploadReportsScreen()));
           }
-          // No need to navigate if index is 2 (current page)
         },
+      ),
+    );
+  }
+  
+  // Build profile information section based on view/edit mode
+  Widget _buildProfileInformation() {
+    if (_isEditMode) {
+      // Edit mode - show editable fields
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _nameController,
+            decoration: InputDecoration(
+              labelText: 'Full Name',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          SizedBox(height: 15),
+          TextField(
+            controller: _addressController,
+            decoration: InputDecoration(
+              labelText: 'Address',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          SizedBox(height: 15),
+          TextField(
+            controller: _ageController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Age',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          SizedBox(height: 15),
+          DropdownButtonFormField<String>(
+            value: _selectedGender,
+            items: genderOptions.map((gender) {
+              return DropdownMenuItem(
+                value: gender,
+                child: Text(gender),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _selectedGender = value;
+                });
+              }
+            },
+            decoration: InputDecoration(
+              labelText: 'Gender',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          SizedBox(height: 15),
+          DropdownButtonFormField<String>(
+            value: _selectedBloodGroup,
+            items: bloodGroups.map((bg) {
+              return DropdownMenuItem(
+                value: bg,
+                child: Text(bg),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _selectedBloodGroup = value;
+                });
+              }
+            },
+            decoration: InputDecoration(
+              labelText: 'Blood Group',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          SizedBox(height: 15),
+          TextField(
+            controller: _contactNumberController,
+            keyboardType: TextInputType.phone,
+            decoration: InputDecoration(
+              labelText: 'Contact Number',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+            ),
+          ),
+          SizedBox(height: 15),
+          Container(
+            padding: EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.3),
+                  spreadRadius: 1,
+                  blurRadius: 3,
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Email Address:',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.teal,
+                  ),
+                ),
+                SizedBox(height: 10),
+                Row(
+                  children: [
+                    Icon(Icons.email, color: Colors.teal),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _userEmail,
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 5),
+                Text(
+                  'Email cannot be changed',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    } else {
+      // View mode - show non-editable profile info
+      return Container(
+        padding: EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.3),
+              spreadRadius: 2,
+              blurRadius: 5,
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Personal Information',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal,
+              ),
+            ),
+            Divider(color: Colors.teal.shade200, thickness: 1),
+            SizedBox(height: 10),
+            
+            _buildProfileItem('Full Name', _nameController.text, Icons.person),
+            _buildProfileItem('Address', _addressController.text, Icons.home),
+            _buildProfileItem('Age', _ageController.text, Icons.calendar_today),
+            _buildProfileItem('Gender', _selectedGender, Icons.people),
+            _buildProfileItem('Blood Group', _selectedBloodGroup, Icons.bloodtype),
+            _buildProfileItem('Contact Number', _contactNumberController.text, Icons.phone),
+            _buildProfileItem('Email', _userEmail, Icons.email),
+          ],
+        ),
+      );
+    }
+  }
+  
+  // Helper widget to display profile item in view mode
+  Widget _buildProfileItem(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.teal.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: Colors.teal),
+          ),
+          SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  value.isEmpty ? 'Not set' : value,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
