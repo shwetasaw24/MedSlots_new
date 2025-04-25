@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
 
 class AppointmentHistoryScreen extends StatefulWidget {
   final String patientEmail;
@@ -166,6 +168,38 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
       setState(() {
         isLoading = false;
       });
+    }
+  }
+
+  // Create appointment sharing message
+  String _createShareMessage(Map<String, dynamic> appointment) {
+    return '''
+📅 *Appointment Details* 📅
+
+👨‍⚕️ *Doctor:* ${appointment['doctorName']}
+🏥 *Clinic:* ${appointment['clinicName']}
+📍 *Location:* ${appointment['location']}
+📆 *Date:* ${appointment['dayOfWeek']}, ${appointment['appointmentDate']}
+⏰ *Time Slot:* ${appointment['appointmentTime']}
+🩺 *Reason:* ${appointment['reasonForVisit']}
+📋 *Status:* ${appointment['status']}
+${appointment['notes'].isNotEmpty ? '📝 *Notes:* ${appointment['notes']}' : ''}
+
+*Booked on:* ${appointment['bookingDate']}
+''';
+  }
+
+  // Share appointment via WhatsApp
+  void _shareAppointmentViaWhatsApp(Map<String, dynamic> appointment) async {
+    final message = _createShareMessage(appointment);
+    final encodedMessage = Uri.encodeComponent(message);
+    final whatsappUrl = 'https://wa.me/?text=$encodedMessage';
+    
+    if (await canLaunch(whatsappUrl)) {
+      await launch(whatsappUrl);
+    } else {
+      // Fallback to general sharing if WhatsApp isn't available
+      Share.share(message, subject: 'My Appointment Details');
     }
   }
 
@@ -390,7 +424,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                           ),
                         SizedBox(height: 8),
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
                               'Booked on: ${appointment['bookingDate']}',
@@ -399,6 +433,16 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                                 fontStyle: FontStyle.italic,
                                 color: Colors.grey,
                               ),
+                            ),
+                            // Share button
+                            IconButton(
+                              icon: Icon(Icons.share, color: Colors.teal),
+                              onPressed: () {
+                                _shareAppointmentViaWhatsApp(appointment);
+                              },
+                              tooltip: 'Share via WhatsApp',
+                              padding: EdgeInsets.zero,
+                              constraints: BoxConstraints(),
                             ),
                           ],
                         ),
@@ -506,6 +550,19 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                         style: TextStyle(color: Colors.red),
                       ),
                     ),
+                    // WhatsApp share button
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _shareAppointmentViaWhatsApp(appointment);
+                      },
+                      icon: Icon(Icons.share),
+                      label: Text('Share via WhatsApp'),
+                    ),
                     if (appointment['status'].toString().toLowerCase() == 'pending')
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
@@ -517,7 +574,7 @@ class _AppointmentHistoryScreenState extends State<AppointmentHistoryScreen> {
                           Navigator.pop(context);
                           // You can navigate to reschedule screen here
                         },
-                        child: Text('Manage Appointment'),
+                        child: Text('Manage'),
                       ),
                   ],
                 ),

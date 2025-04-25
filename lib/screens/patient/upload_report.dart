@@ -9,6 +9,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:path/path.dart' as path;
+import 'package:url_launcher/url_launcher_string.dart';
 
 class UploadReportsScreen extends StatefulWidget {
   @override
@@ -74,7 +75,7 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
       }
     } catch (e) {
       print("Error fetching user data: $e");
-      _showSnackBar("Failed to load user data");
+      _showSnackBar("Failed to load user data: ${e.toString()}");
     } finally {
       setState(() {
         isLoading = false;
@@ -83,34 +84,49 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Future<void> _fetchUploadedReports(String userEmail) async {
     try {
-      // Get documents from Firestore instead of just Storage references
+      print("Fetching reports for email: $userEmail");
+      
+      // Get documents from Firestore
       QuerySnapshot querySnapshot = await FirebaseFirestore.instance
           .collection('Records')
           .where('patientId', isEqualTo: userEmail)
           .orderBy('uploadDate', descending: true)
           .get();
           
+      print("Found ${querySnapshot.docs.length} reports");
+          
       setState(() {
         cloudFiles = querySnapshot.docs
-            .map((doc) => {
-                  'id': doc.id,
-                  'fileName': doc['fileName'],
-                  'fileUrl': doc['fileUrl'],
-                  'uploadDate': doc['uploadDate'],
-                  'isCloud': true,
-                })
+            .map((doc) {
+              Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+              return {
+                'id': doc.id,
+                'fileName': data['fileName'] ?? 'Unknown file',
+                'fileUrl': data['fileUrl'] ?? '',
+                'uploadDate': data['uploadDate'] ?? Timestamp.now(),
+                'fileType': data['fileType'] ?? '',
+                'fileSize': data['fileSize'] ?? 0,
+                'isCloud': true,
+              };
+            })
             .toList();
       });
     } catch (e) {
       print("Error fetching reports: $e");
-      _showSnackBar("Failed to load reports");
+      _showSnackBar("Failed to load reports: ${e.toString()}");
     }
   }
 
@@ -130,14 +146,21 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
             }
           }
         });
+        
+        // Show a message with the number of files selected
+        if (result.files.isNotEmpty) {
+          _showSnackBar("${result.files.length} file(s) selected");
+        }
       }
     } catch (e) {
       print("Error picking file: $e");
-      _showSnackBar("Failed to pick file");
+      _showSnackBar("Failed to pick file: ${e.toString()}");
     }
   }
 
   Future<void> uploadFileToStorage(File file) async {
+    if (!mounted) return;
+    
     setState(() {
       isUploading = true;
       uploadProgress = 0.0;
@@ -153,77 +176,136 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
       String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
       String fileId = '$timestamp-$fileName';
       
+      print("Starting upload for file: $fileName");
+      
+      // First check if file exists and has content
+      if (!await file.exists()) {
+        throw Exception("File does not exist");
+      }
+      
+      int fileSize = await file.length();
+      if (fileSize == 0) {
+        throw Exception("File is empty");
+      }
+      
       // Create reference to upload location
       Reference storageRef = FirebaseStorage.instance
           .ref()
-          .child('reports/${user.email}/$fileId');
+          .child('patient_reports')
+          .child(user.email ?? 'unknown')
+          .child(fileId);
+      
+      print("Storage reference created: ${storageRef.fullPath}");
       
       // Start upload with progress tracking
       UploadTask uploadTask = storageRef.putFile(file);
       
       // Monitor upload progress
       uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-        setState(() {
-          uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
-        });
+        if (mounted) {
+          setState(() {
+            uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
+          });
+        }
+        print("Upload progress: ${(uploadProgress * 100).toStringAsFixed(0)}%");
       });
       
       // Wait for upload to complete
       TaskSnapshot taskSnapshot = await uploadTask;
       String downloadUrl = await taskSnapshot.ref.getDownloadURL();
       
-      // Save file metadata to Firestore
-      DocumentReference docRef = await FirebaseFirestore.instance
-          .collection('Records')
-          .add({
-            'fileName': fileName,
-            'fileUrl': downloadUrl,
-            'uploadDate': FieldValue.serverTimestamp(),
-            'patientId': user.email,
-            'patientName': userName,
-            'fileSize': await file.length(),
-            'fileType': path.extension(file.path).replaceAll('.', ''),
-          });
+      print("File uploaded successfully. Download URL: $downloadUrl");
       
-      // Update local list immediately
-      setState(() {
-        cloudFiles.insert(0, {
-          'id': docRef.id,
-          'fileName': fileName,
-          'fileUrl': downloadUrl,
-          'uploadDate': Timestamp.now(),
-          'isCloud': true,
-        });
+      // Get file type
+      String fileType = path.extension(file.path).replaceAll('.', '');
+      
+      // Create a document in Firestore
+      await FirebaseFirestore.instance.collection('Records').add({
+        'fileName': fileName,
+        'fileUrl': downloadUrl,
+        'uploadDate': FieldValue.serverTimestamp(),
+        'patientId': user.email,
+        'patientName': userName,
+        'fileSize': fileSize,
+        'fileType': fileType,
+        'storagePath': storageRef.fullPath,
+      }).then((docRef) {
+        print("Document added with ID: ${docRef.id}");
         
-        // Remove from local files list
-        localFiles.remove(file);
+        // Update local list immediately
+        if (mounted) {
+          setState(() {
+            cloudFiles.insert(0, {
+              'id': docRef.id,
+              'fileName': fileName,
+              'fileUrl': downloadUrl,
+              'uploadDate': Timestamp.now(),
+              'fileType': fileType,
+              'fileSize': fileSize,
+              'isCloud': true,
+            });
+            
+            // Remove from local files list
+            localFiles.remove(file);
+          });
+        }
+        
+        _showSnackBar("$fileName uploaded successfully");
+      }).catchError((error) {
+        print("Error adding document: $error");
+        throw Exception("Failed to save file metadata: $error");
       });
       
-      _showSnackBar("File uploaded successfully");
     } catch (e) {
       print("Error uploading file: $e");
-      _showSnackBar("Failed to upload file: ${e.toString()}");
+      if (mounted) {
+        _showSnackBar("Upload failed: ${e.toString().split('\n')[0]}");
+      }
     } finally {
-      setState(() {
-        isUploading = false;
-      });
+      if (mounted) {
+        setState(() {
+          isUploading = false;
+        });
+      }
     }
   }
 
-  void openFile(dynamic file) {
-    if (file is File) {
-      OpenFile.open(file.path);
-    } else if (file is Map && file.containsKey('fileUrl')) {
-      // For cloud files, you would typically launch a URL
-      // But this depends on your app's capabilities
-      _showSnackBar("Opening cloud file in browser");
-      // You might want to use url_launcher package here
+  Future<void> openFile(dynamic file) async {
+    try {
+      if (file is File) {
+        await OpenFile.open(file.path);
+      } else if (file is Map && file.containsKey('fileUrl')) {
+        String url = file['fileUrl'];
+        
+        // Update last accessed timestamp in Firestore
+        if (file['id'] != null) {
+          try {
+            await FirebaseFirestore.instance
+                .collection('Records')
+                .doc(file['id'])
+                .update({
+                  'lastAccessed': FieldValue.serverTimestamp(),
+                });
+          } catch (e) {
+            print("Error updating last accessed: $e");
+          }
+        }
+        
+        // Launch URL
+        if (await canLaunchUrlString(url)) {
+          await launchUrlString(url, mode: LaunchMode.externalApplication);
+        } else {
+          _showSnackBar("Cannot open this file");
+        }
+      }
+    } catch (e) {
+      print("Error opening file: $e");
+      _showSnackBar("Failed to open file: ${e.toString()}");
     }
   }
 
-  void toggleSelection(int index, bool isCloud) {
+  void toggleSelection(int index) {
     setState(() {
-      String id = isCloud ? '$index:cloud' : '$index:local';
       if (selectedFiles.contains(index)) {
         selectedFiles.remove(index);
       } else {
@@ -234,6 +316,31 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
   }
 
   Future<void> deleteSelectedFiles() async {
+    // Show confirmation dialog
+    bool confirmDelete = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Files'),
+        content: Text('Are you sure you want to delete ${selectedFiles.length} file(s)?'),
+        actions: [
+          TextButton(
+            child: Text('Cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Delete'),
+            onPressed: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    ) ?? false;
+    
+    if (!confirmDelete) return;
+    
     setState(() {
       isLoading = true;
     });
@@ -241,35 +348,46 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
     try {
       User? user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        // Process cloud files
+        // Process files by selection index
         List<int> cloudIndexesToDelete = [];
+        List<int> localIndexesToDelete = [];
+        
         for (int index in selectedFiles) {
           if (index < cloudFiles.length) {
-            String docId = cloudFiles[index]['id'];
-            String fileUrl = cloudFiles[index]['fileUrl'];
+            // This is a cloud file
+            Map<String, dynamic> fileData = cloudFiles[index];
+            String docId = fileData['id'];
+            String fileUrl = fileData['fileUrl'];
             
-            // Delete from Firestore
-            await FirebaseFirestore.instance
-                .collection('Records')
-                .doc(docId)
-                .delete();
-                
-            // Delete from Storage
-            // Extract the path from the download URL
+            print("Deleting cloud file: ${fileData['fileName']} (ID: $docId)");
+            
             try {
-              await FirebaseStorage.instance.refFromURL(fileUrl).delete();
+              // Delete from Firestore
+              await FirebaseFirestore.instance
+                  .collection('Records')
+                  .doc(docId)
+                  .delete();
+              
+              print("Document deleted from Firestore");
+              
+              // Try to delete from Storage if URL available
+              try {
+                await FirebaseStorage.instance
+                    .refFromURL(fileUrl)
+                    .delete();
+                print("File deleted from Storage");
+              } catch (e) {
+                print("Error deleting file from storage: $e");
+                // Continue anyway - the Firestore record is gone
+              }
+              
+              cloudIndexesToDelete.add(index);
             } catch (e) {
-              print("Error deleting file from storage: $e");
+              print("Error deleting cloud file: $e");
+              _showSnackBar("Error deleting ${fileData['fileName']}");
             }
-            
-            cloudIndexesToDelete.add(index);
-          }
-        }
-        
-        // Process local files
-        List<int> localIndexesToDelete = [];
-        for (int index in selectedFiles) {
-          if (index >= cloudFiles.length && index < cloudFiles.length + localFiles.length) {
+          } else {
+            // This is a local file
             int localIndex = index - cloudFiles.length;
             if (localIndex >= 0 && localIndex < localFiles.length) {
               localIndexesToDelete.add(localIndex);
@@ -277,33 +395,133 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
           }
         }
         
+        // Remove files from our lists
         setState(() {
-          // Remove deleted cloud files
-          cloudFiles = cloudFiles.asMap().entries
-              .where((entry) => !cloudIndexesToDelete.contains(entry.key))
-              .map((entry) => entry.value)
-              .toList();
-              
-          // Remove deleted local files
-          localFiles = localFiles.asMap().entries
-              .where((entry) => !localIndexesToDelete.contains(entry.key))
-              .map((entry) => entry.value)
-              .toList();
-              
+          // For cloud files, we need to be careful about indices
+          List<Map<String, dynamic>> newCloudFiles = [];
+          for (int i = 0; i < cloudFiles.length; i++) {
+            if (!cloudIndexesToDelete.contains(i)) {
+              newCloudFiles.add(cloudFiles[i]);
+            }
+          }
+          cloudFiles = newCloudFiles;
+          
+          // For local files, we can use a different approach
+          List<File> newLocalFiles = [];
+          for (int i = 0; i < localFiles.length; i++) {
+            if (!localIndexesToDelete.contains(i)) {
+              newLocalFiles.add(localFiles[i]);
+            }
+          }
+          localFiles = newLocalFiles;
+          
           selectedFiles.clear();
           isSelecting = false;
         });
+        
+        _showSnackBar("Files deleted successfully");
       }
-      
-      _showSnackBar("Files deleted successfully");
     } catch (e) {
-      print("Error deleting files: $e");
-      _showSnackBar("Failed to delete some files");
+      print("Error during deletion process: $e");
+      _showSnackBar("Failed to delete some files: ${e.toString()}");
     } finally {
       setState(() {
         isLoading = false;
       });
     }
+  }
+
+  Future<void> deleteFile(int index) async {
+    // Determine if this is a cloud or local file
+    bool isCloud = index < cloudFiles.length;
+    String fileName = isCloud 
+        ? cloudFiles[index]['fileName'] 
+        : path.basename(localFiles[index - cloudFiles.length].path);
+    
+    // Show confirmation dialog
+    bool confirmDelete = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete File'),
+        content: Text('Are you sure you want to delete "$fileName"?'),
+        actions: [
+          TextButton(
+            child: Text('Cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Delete'),
+            onPressed: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    ) ?? false;
+    
+    if (!confirmDelete) return;
+    
+    setState(() {
+      isLoading = true;
+    });
+    
+    try {
+      if (isCloud) {
+        // Delete cloud file
+        Map<String, dynamic> fileData = cloudFiles[index];
+        String docId = fileData['id'];
+        String fileUrl = fileData['fileUrl'];
+        
+        // Delete from Firestore
+        await FirebaseFirestore.instance
+            .collection('Records')
+            .doc(docId)
+            .delete();
+        
+        // Try to delete from Storage
+        try {
+          await FirebaseStorage.instance
+              .refFromURL(fileUrl)
+              .delete();
+        } catch (e) {
+          print("Error deleting file from storage: $e");
+          // Continue anyway
+        }
+        
+        setState(() {
+          cloudFiles.removeAt(index);
+        });
+      } else {
+        // Just remove local file from list
+        int localIndex = index - cloudFiles.length;
+        setState(() {
+          localFiles.removeAt(localIndex);
+        });
+      }
+      
+      _showSnackBar("$fileName deleted successfully");
+    } catch (e) {
+      print("Error deleting file: $e");
+      _showSnackBar("Failed to delete file: ${e.toString()}");
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  String _formatDate(Timestamp? timestamp) {
+    if (timestamp == null) return 'Unknown date';
+    DateTime date = timestamp.toDate();
+    return '${date.day}/${date.month}/${date.year}';
   }
 
   @override
@@ -312,17 +530,17 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
       appBar: AppBar(
         title: isSelecting
             ? Text('${selectedFiles.length} Selected',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))
-            : Text('Reports',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white))
+            : Text('Medical Reports',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: Colors.teal,
-        elevation: 0,
+        elevation: 2,
         iconTheme: IconThemeData(color: Colors.white),
         actions: isSelecting
             ? [
                 IconButton(
-                  icon: Icon(Icons.delete, color: Colors.red),
-                  onPressed: deleteSelectedFiles,
+                  icon: Icon(Icons.delete, color: Colors.red.shade100),
+                  onPressed: selectedFiles.isNotEmpty ? deleteSelectedFiles : null,
                 ),
                 IconButton(
                   icon: Icon(Icons.cancel, color: Colors.white),
@@ -334,7 +552,15 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                   },
                 )
               ]
-            : [],
+            : [
+                IconButton(
+                  icon: Icon(Icons.refresh, color: Colors.white),
+                  onPressed: isLoading ? null : () {
+                    _fetchUserData();
+                    _showSnackBar("Refreshing reports...");
+                  },
+                )
+              ],
       ),
       body: isLoading
           ? Center(child: CircularProgressIndicator(color: Colors.teal))
@@ -343,7 +569,7 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Colors.teal.shade100, Colors.white],
+                  colors: [Colors.teal.shade50, Colors.white],
                 ),
               ),
               child: Column(
@@ -356,7 +582,8 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                       children: [
                         CircleAvatar(
                           backgroundColor: Colors.teal.shade700,
-                          child: Icon(Icons.person, color: Colors.white),
+                          radius: 24,
+                          child: Icon(Icons.person, color: Colors.white, size: 28),
                         ),
                         SizedBox(width: 12),
                         Expanded(
@@ -378,6 +605,11 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                                   color: Colors.black54,
                                 ),
                               ),
+                              if (age > 0 && gender.isNotEmpty) 
+                                Text(
+                                  "$age years, $gender${bloodGroup.isNotEmpty ? ', $bloodGroup' : ''}",
+                                  style: TextStyle(fontSize: 14, color: Colors.black54),
+                                ),
                             ],
                           ),
                         ),
@@ -404,12 +636,13 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                       ),
                     ),
                   
+                  // Reports header
                   Padding(
                     padding: EdgeInsets.all(16.0),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Reports',
+                        Text('Medical Reports',
                             style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -422,6 +655,16 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                     ),
                   ),
                   
+                  // Debug info - Remove in production
+                  // Padding(
+                  //   padding: EdgeInsets.symmetric(horizontal: 16.0),
+                  //   child: Text(
+                  //     "Cloud files: ${cloudFiles.length}, Local files: ${localFiles.length}",
+                  //     style: TextStyle(color: Colors.grey, fontSize: 12),
+                  //   ),
+                  // ),
+                  
+                  // Main content - file list or empty state
                   Expanded(
                     child: cloudFiles.isEmpty && localFiles.isEmpty
                         ? Center(
@@ -459,6 +702,14 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                                   : path.basename(file.path);
                               bool isSelected = selectedFiles.contains(index);
                               
+                              // Get additional details for cloud files
+                              String fileSize = isCloud && file['fileSize'] != null
+                                  ? _formatFileSize(file['fileSize'])
+                                  : isCloud ? 'Unknown size' : 'Local file';
+                              String uploadDate = isCloud && file['uploadDate'] != null
+                                  ? _formatDate(file['uploadDate'])
+                                  : isCloud ? 'Unknown date' : 'Not uploaded yet';
+                              
                               return Card(
                                 elevation: 3,
                                 margin: EdgeInsets.symmetric(vertical: 6, horizontal: 2),
@@ -466,11 +717,11 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                                     borderRadius: BorderRadius.circular(10)),
                                 color: isSelected ? Colors.blue.shade100 : Colors.white,
                                 child: ListTile(
-                                  onLongPress: () => toggleSelection(index, isCloud),
+                                  onLongPress: () => toggleSelection(index),
                                   onTap: () {
                                     if (isSelecting) {
-                                      toggleSelection(index, isCloud);
-                                    } else if (!isCloud) {
+                                      toggleSelection(index);
+                                    } else {
                                       openFile(file);
                                     }
                                   },
@@ -481,17 +732,26 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                                         fontSize: 16, fontWeight: FontWeight.bold),
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                  subtitle: Row(
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Icon(
-                                        isCloud ? Icons.cloud_done : Icons.file_present,
-                                        size: 14,
-                                        color: isCloud ? Colors.teal : Colors.orange,
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            isCloud ? Icons.cloud_done : Icons.file_present,
+                                            size: 14,
+                                            color: isCloud ? Colors.teal : Colors.orange,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            isCloud ? "Uploaded • $uploadDate" : "Local file",
+                                            style: TextStyle(fontSize: 12),
+                                          ),
+                                        ],
                                       ),
-                                      SizedBox(width: 4),
                                       Text(
-                                        isCloud ? "Uploaded" : "Local file",
-                                        style: TextStyle(fontSize: 12),
+                                        fileSize,
+                                        style: TextStyle(fontSize: 12, color: Colors.grey),
                                       ),
                                     ],
                                   ),
@@ -504,19 +764,25 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                                       : Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            if (!isCloud)
+                                            if (!isCloud && !isUploading)
                                               IconButton(
                                                 icon: Icon(Icons.cloud_upload,
                                                     color: Colors.teal),
-                                                onPressed: !isUploading
-                                                    ? () => uploadFileToStorage(file)
-                                                    : null,
+                                                onPressed: () => uploadFileToStorage(file),
+                                                tooltip: 'Upload',
                                               ),
                                             IconButton(
                                               icon: Icon(
-                                                isCloud ? Icons.open_in_new : Icons.visibility,
+                                                Icons.visibility,
                                                 color: Colors.blue.shade900),
                                               onPressed: () => openFile(file),
+                                              tooltip: 'View',
+                                            ),
+                                            IconButton(
+                                              icon: Icon(Icons.delete_outline, 
+                                                color: Colors.red.shade400),
+                                              onPressed: () => deleteFile(index),
+                                              tooltip: 'Delete',
                                             ),
                                           ],
                                         ),
@@ -526,20 +792,23 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
                           ),
                   ),
                   
-                  Padding(
+                  // Button to add files
+                  Container(
+                    width: double.infinity,
                     padding: EdgeInsets.all(16.0),
                     child: ElevatedButton.icon(
                       onPressed: !isUploading ? pickFile : null,
                       icon: Icon(Icons.add),
-                      label: Text('Add Files', style: TextStyle(fontSize: 16)),
+                      label: Text('Add New Reports', style: TextStyle(fontSize: 16)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue.shade900,
+                        backgroundColor: isUploading ? Colors.grey : Colors.blue.shade900,
                         foregroundColor: Colors.white,
                         padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                         minimumSize: Size(double.infinity, 48), // Width takes full width
+                        disabledBackgroundColor: Colors.grey.shade400,
                       ),
                     ),
                   ),
@@ -554,7 +823,7 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.upload_file, color: Colors.teal),
-            label: 'Upload Records',
+            label: 'Reports',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person, color: Colors.teal),
@@ -578,9 +847,7 @@ class _UploadReportsScreenState extends State<UploadReportsScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => PatientProfileScreen(
-                    // email: currentUser.email!,
-                  ),
+                  builder: (context) => PatientProfileScreen(),
                 ),
               );
             } else {

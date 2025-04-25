@@ -617,22 +617,7 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       appBar: AppBar(
         title: Text("Doctor Details"),
         backgroundColor: Colors.teal,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.notifications),
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
-              String? latestBooking = prefs.getString("latest_booking");
-              Fluttertoast.showToast(
-                msg: latestBooking ?? "No recent bookings",
-                toastLength: Toast.LENGTH_LONG,
-                gravity: ToastGravity.TOP,
-                backgroundColor: Colors.blue,
-                textColor: Colors.white,
-              );
-            },
-          ),
-        ],
+        
       ),
       body: Padding(
         padding: EdgeInsets.all(16.0),

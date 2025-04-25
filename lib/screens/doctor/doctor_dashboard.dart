@@ -194,6 +194,27 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       // 5. Check global appointments collection
       queries.add(_firestore.collection('appointments').get());
 
+      // 6.
+      // Add to the queries list in _fetchAppointments method:
+
+      // Check for clinic-specific appointments if doctor has a clinic assigned
+      if (doctorData.containsKey('clinicName') && doctorData['clinicName'] != null) {
+        String clinicName = doctorData['clinicName'].toString();
+        queries.add(_firestore.collection('Appointment')
+            .where('clinicName', isEqualTo: clinicName)
+            .get());
+
+        queries.add(_firestore.collection('Bookings')
+            .doc('Appointment')
+            .collection('Appointment')
+            .where('clinicName', isEqualTo: clinicName)
+            .get());
+
+        queries.add(_firestore.collection('appointments')
+            .where('clinicName', isEqualTo: clinicName)
+            .get());
+      }
+
       // Execute all queries in parallel
       List<QuerySnapshot> queryResults = await Future.wait(queries);
 
@@ -285,67 +306,73 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     }
   }
 
-  // Helper: Check if an appointment belongs to the current doctor
+    // Helper: Check if an appointment belongs to the current doctor
   bool _isAppointmentForDoctor(Map<String, dynamic> data, String doctorEmail, String doctorName, String doctorId) {
-    // Check all possible doctor identifier fields with case insensitivity
-    String apptDoctorEmail = (data['doctorEmail'] ?? data['DoctorEmail'] ?? '').toString().toLowerCase().trim();
-    String apptDoctorName = (data['doctorName'] ?? data['DoctorName'] ?? '').toString().trim();
-    String apptDoctorId = (data['doctorId'] ?? data['DoctorId'] ?? '').toString().trim();
+    // Normalize inputs first - convert to lowercase and trim
+    doctorEmail = doctorEmail.toLowerCase().trim();
+    doctorName = doctorName.toLowerCase().trim();
+    doctorId = doctorId.trim();
 
-    // Additional fields from your example data
-    if (apptDoctorEmail.isEmpty && data.containsKey('doctorEmail')) {
-      apptDoctorEmail = data['doctorEmail'].toString().toLowerCase().trim();
-    }
+    // Extract all possible doctor identifier fields with normalization
+    String apptDoctorEmail = (data['doctorEmail'] ?? data['DoctorEmail'] ?? data['doctor_email'] ?? '').toString().toLowerCase().trim();
+    String apptDoctorName = (data['doctorName'] ?? data['DoctorName'] ?? data['doctor_name'] ?? '').toString().toLowerCase().trim();
+    String apptDoctorId = (data['doctorId'] ?? data['DoctorId'] ?? data['doctor_id'] ?? '').toString().trim();
 
-    if (apptDoctorName.isEmpty && data.containsKey('doctorName')) {
-      apptDoctorName = data['doctorName'].toString().trim();
-    }
-
-    // Also check potential nested objects or differently named fields
+    // Check nested doctor object if it exists
     if (data['doctor'] is Map) {
       Map<String, dynamic> doctorInfo = data['doctor'] as Map<String, dynamic>;
-      if (doctorInfo['email'] != null) {
+      if (doctorInfo['email'] != null && apptDoctorEmail.isEmpty) {
         apptDoctorEmail = doctorInfo['email'].toString().toLowerCase().trim();
       }
-      if (doctorInfo['name'] != null) {
-        apptDoctorName = doctorInfo['name'].toString().trim();
+      if (doctorInfo['name'] != null && apptDoctorName.isEmpty) {
+        apptDoctorName = doctorInfo['name'].toString().toLowerCase().trim();
       }
-      if (doctorInfo['id'] != null) {
+      if (doctorInfo['id'] != null && apptDoctorId.isEmpty) {
         apptDoctorId = doctorInfo['id'].toString().trim();
       }
     }
 
+    // Print for debugging
     print("Comparing: App doctor email: '$apptDoctorEmail' with '$doctorEmail'");
     print("Comparing: App doctor name: '$apptDoctorName' with '$doctorName'");
     print("Comparing: App doctor ID: '$apptDoctorId' with '$doctorId'");
 
-    // More aggressively normalize doctor name/email for matching
-    // Check for partial matches in either direction for doctor name
-    bool nameMatches = false;
-    if (doctorName.isNotEmpty && apptDoctorName.isNotEmpty) {
-      nameMatches = doctorName.toLowerCase().contains(apptDoctorName.toLowerCase()) || 
-                    apptDoctorName.toLowerCase().contains(doctorName.toLowerCase());
-    }
+    // Check for email match (exact)
+    bool emailMatches = apptDoctorEmail.isNotEmpty && doctorEmail.isNotEmpty && 
+                       (apptDoctorEmail == doctorEmail || 
+                        apptDoctorEmail.contains(doctorEmail) || 
+                        doctorEmail.contains(apptDoctorEmail));
 
-    bool emailMatches = apptDoctorEmail == doctorEmail;
-    bool idMatches = apptDoctorId == doctorId;
+    // Check for name match (more flexible)
+    bool nameMatches = apptDoctorName.isNotEmpty && doctorName.isNotEmpty && 
+                      (apptDoctorName == doctorName || 
+                       apptDoctorName.contains(doctorName) || 
+                       doctorName.contains(apptDoctorName));
 
-    // Check for case-insensitive matches
-    if (!emailMatches && doctorEmail.isNotEmpty && apptDoctorEmail.isNotEmpty) {
-      emailMatches = doctorEmail.toLowerCase() == apptDoctorEmail.toLowerCase();
-    }
+    // ID match (exact)
+    bool idMatches = apptDoctorId.isNotEmpty && doctorId.isNotEmpty && apptDoctorId == doctorId;
 
-    // In case someone used a display name as email
+    // Check for cases where email might contain name
     if (!emailMatches && !nameMatches && doctorEmail.isNotEmpty && apptDoctorName.isNotEmpty) {
-      emailMatches = doctorEmail.toLowerCase().contains(apptDoctorName.toLowerCase()) ||
-                    apptDoctorName.toLowerCase().contains(doctorEmail.toLowerCase());
+      emailMatches = doctorEmail.contains(apptDoctorName) || apptDoctorName.contains(doctorEmail);
     }
 
-    print("Match results - Email: $emailMatches, Name: $nameMatches, ID: $idMatches");
+    // Add clinic-based matching if there's clinic info
+    bool clinicMatches = false;
+    if (doctorData['clinicName'] != null && data['clinicName'] != null) {
+      String doctorClinic = doctorData['clinicName'].toString().toLowerCase().trim();
+      String apptClinic = data['clinicName'].toString().toLowerCase().trim();
+      clinicMatches = doctorClinic.isNotEmpty && apptClinic.isNotEmpty && 
+                      (doctorClinic == apptClinic || 
+                       doctorClinic.contains(apptClinic) || 
+                       apptClinic.contains(doctorClinic));
+    }
 
-    return emailMatches || nameMatches || idMatches;
-  }
-  
+    print("Match results - Email: $emailMatches, Name: $nameMatches, ID: $idMatches, Clinic: $clinicMatches");
+
+    // Return true if any match is found
+    return emailMatches || nameMatches || idMatches || clinicMatches;
+  }  
   // Helper: Try to parse date in multiple formats
   DateTime? _tryParseDate(String dateStr) {
     List<String> formats = [
@@ -377,7 +404,7 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
   
   // Helper: Create standardized appointment data
   Future<Map<String, dynamic>> _createAppointmentData(String docId, Map<String, dynamic> data) async {
-    // Get patient email from all possible field names
+  // Get patient email from all possible field names
     String patientEmail = (data['patientEmail'] ?? 
                           data['PatientEmail'] ?? 
                           data['patient_email'] ?? 
@@ -431,7 +458,40 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
                       data['BookedOn'] ?? 
                       data['bookingDate'] ?? "").toString();
   
-    print("Extracted appointment details - Email: $patientEmail, Time: $timeSlot, Date: $date, Clinic: $clinicName");
+    // Extract patient contact directly from appointment data
+    List<String> contactFieldNames = [
+      'patientContact', 'PatientContact', 'patient_contact', 
+      'contactNo', 'contact', 'phone', 'phoneNumber',
+      'patientPhone', 'PatientPhone', 'patient_phone',
+      'patientMobile', 'PatientMobile', 'patient_mobile'
+    ];
+    
+    String patientContact = "Unknown";
+    for (String fieldName in contactFieldNames) {
+      if (data.containsKey(fieldName) && 
+          data[fieldName] != null && 
+          data[fieldName].toString().isNotEmpty) {
+        patientContact = data[fieldName].toString();
+        print("Found patient contact directly in appointment data ($fieldName): $patientContact");
+        break;
+      }
+    }
+    
+    // Check in nested patient object if available
+    if (patientContact == "Unknown" && data['patient'] is Map) {
+      Map<String, dynamic> patientObj = data['patient'] as Map<String, dynamic>;
+      for (String fieldName in contactFieldNames) {
+        if (patientObj.containsKey(fieldName) && 
+            patientObj[fieldName] != null && 
+            patientObj[fieldName].toString().isNotEmpty) {
+          patientContact = patientObj[fieldName].toString();
+          print("Found patient contact in nested patient object ($fieldName): $patientContact");
+          break;
+        }
+      }
+    }
+  
+    print("Extracted appointment details - Email: $patientEmail, Contact: $patientContact, Time: $timeSlot, Date: $date");
   
     // Create appointment data object with all available fields
     Map<String, dynamic> appointmentData = {
@@ -439,8 +499,8 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       "name": "Unknown Patient", // Will update if patient data is found
       "time": timeSlot,
       "date": date,
-      "contact": "Unknown",
-      "doctorContact": doctorContact, // Added doctor contact specifically
+      "contact": patientContact, // Set initial contact from appointment data
+      "doctorContact": doctorContact,
       "done": isCompleted,
       "clinicName": clinicName,
       "patientEmail": patientEmail,
@@ -448,39 +508,30 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
       "location": location,
       "specialization": specialization,
       "bookedOn": bookedOn,
-      // Add all other relevant fields from the original data
       "rawData": data, // Include raw data for reference if needed
     };
+  
+    // Try to get patient name directly from appointment if not in patient collection
+    String patientName = (data['patientName'] ?? 
+                       data['PatientName'] ?? 
+                       data['patient_name'] ?? 
+                       "Unknown Patient").toString();
+    
+    appointmentData["name"] = patientName;
   
     // Try to get patient information through multiple methods
     if (patientEmail.isNotEmpty) {
       await _fetchPatientDetails(patientEmail, appointmentData);
-    } else {
-      // If there's no email, try to extract patient name directly from appointment
-      String patientName = (data['patientName'] ?? 
-                         data['PatientName'] ?? 
-                         data['patient_name'] ?? 
-                         "Unknown Patient").toString();
-  
-      String patientContact = (data['patientContact'] ?? 
-                           data['PatientContact'] ?? 
-                           data['patient_contact'] ?? 
-                           data['contactNo'] ?? 
-                           data['contact'] ??
-                           "Unknown").toString();
-  
-      appointmentData["name"] = patientName;
-      appointmentData["contact"] = patientContact;
-  
-      // If we have a phone number but no email, try finding patient by phone number
-      if (patientContact != "Unknown" && patientContact.isNotEmpty) {
-        await _fetchPatientDetailsByContact(patientContact, appointmentData);
-      }
+    }
+    
+    // If contact is still unknown but we have a potentially valid contact number from appointment data
+    if ((appointmentData["contact"] == "Unknown" || appointmentData["contact"].toString().isEmpty) && 
+        patientContact != "Unknown" && patientContact.isNotEmpty) {
+      await _fetchPatientDetailsByContact(patientContact, appointmentData);
     }
   
     return appointmentData;
   }
-
   Future<void> _loadPatientHistory() async {
     try {
       // Update to use doctorId directly
@@ -627,41 +678,54 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     }
   }
 
-  // Helper method to fetch patient details by contact number
+    // Helper method to fetch patient details by contact number
   Future<void> _fetchPatientDetailsByContact(String contactNumber, Map<String, dynamic> appointmentData) async {
     try {
-      // Try multiple paths to find patient data by contact
-      List<Future<QuerySnapshot>> patientQueries = [
-        _firestore.collection('Patient')
-            .where('contactNumber No.', isEqualTo: contactNumber)
-            .limit(1)
-            .get(),
+      // Normalize contact number for better matching
+      String normalizedContact = contactNumber.replaceAll(RegExp(r'\D'), '');
+      print("Looking for patient with contact: $contactNumber (normalized: $normalizedContact)");
 
-        _firestore.collection('Patient')
-            .where('phoneNumber', isEqualTo: contactNumber)
-            .limit(1)
-            .get(),
+      // Store normalized contact in appointment data
+      if (normalizedContact.isNotEmpty) {
+        appointmentData["contact"] = contactNumber;
+      }
 
-        _firestore.collection('Patient')
-            .where('phone', isEqualTo: contactNumber)
-            .limit(1)
-            .get(),
-
-        _firestore.collection('Patient')
-            .where('contact', isEqualTo: contactNumber)
-            .limit(1)
-            .get(),
-
-        _firestore.collection('patients')
-            .where('phoneNumber', isEqualTo: contactNumber)
-            .limit(1)
-            .get(),
-
-        _firestore.collection('patients')
-            .where('phone', isEqualTo: contactNumber)
-            .limit(1)
-            .get(),
+      // Create a list of all possible contact field names
+      List<String> contactFieldNames = [
+        'contactNumber No.', 'contactNumber', 'contactNumberNo.', 'contactNo', 'contactNo.',
+        'phoneNumber', 'phone', 'PhoneNumber', 'Phone',
+        'mobileNumber', 'mobile', 'Mobile', 'MobileNumber',
+        'contact', 'Contact', 'number', 'Number'
       ];
+
+      // Generate all queries for each possible field name
+      List<Future<QuerySnapshot>> patientQueries = [];
+      for (String fieldName in contactFieldNames) {
+        patientQueries.add(
+          _firestore.collection('Patient')
+              .where(fieldName, isEqualTo: contactNumber)
+              .limit(1)
+              .get()
+        );
+
+        // Also try with normalized contact (digits only)
+        if (normalizedContact != contactNumber) {
+          patientQueries.add(
+            _firestore.collection('Patient')
+                .where(fieldName, isEqualTo: normalizedContact)
+                .limit(1)
+                .get()
+          );
+        }
+
+        // Try in 'patients' collection too
+        patientQueries.add(
+          _firestore.collection('patients')
+              .where(fieldName, isEqualTo: contactNumber)
+              .limit(1)
+              .get()
+        );
+      }
 
       for (var patientQueryFuture in patientQueries) {
         try {
@@ -669,12 +733,12 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
 
           if (patientSnapshot.docs.isNotEmpty) {
             Map<String, dynamic> patientData = patientSnapshot.docs.first.data() as Map<String, dynamic>;
+            print("Found patient via contact information: ${patientSnapshot.docs.first.id}");
+            print("Patient data: $patientData");
             _extractAndPopulatePatientData(patientData, appointmentData);
-            print("Found patient via contact number: ${appointmentData["name"]}");
             break;  // Exit loop once we find patient data
           }
         } catch (e) {
-          print("Error in patient contact query method: $e");
           // Continue to next method
         }
       }
@@ -683,73 +747,157 @@ class _DoctorDashboardState extends State<DoctorDashboard> {
     }
   }
 
-  // Helper to extract all patient data fields and put them in the appointment data
-  void _extractAndPopulatePatientData(Map<String, dynamic> patientData, Map<String, dynamic> appointmentData) {
-    // Basic patient info
+    // Helper to extract all patient data fields and put them in the appointment data
+ void _extractAndPopulatePatientData(Map<String, dynamic> patientData, Map<String, dynamic> appointmentData) {
+    // Print FULL patient data for debugging
+    print("FULL PATIENT DATA: $patientData");
+
+    // Basic patient info - name extraction remains the same
     String patientName = (patientData['name'] ?? 
                         patientData['fullName'] ?? 
                         patientData['Name'] ?? 
                         appointmentData["name"]).toString();
-                        
-    String patientContact = (patientData['contactNumber No.'] ?? 
-                          patientData['phone'] ?? 
-                          patientData['phoneNumber'] ?? 
-                          patientData['contact'] ?? 
-                          patientData['contactNo'] ?? 
-                          appointmentData["contact"]).toString();
-    
-    // Update basic info
+
+    // IMPORTANT: Check if there's already a contact in the appointment data
+    String existingContact = appointmentData["contact"] ?? "";
+    if (existingContact.isNotEmpty && existingContact != "Unknown") {
+      print("Using existing contact from appointment data: $existingContact");
+    }
+
+    // Initialize contact with existing value if it's valid
+    String patientContact = (existingContact != "Unknown" && existingContact.isNotEmpty) ? existingContact : "";
+
+    // Print ALL possible contact field names for debugging
+    patientData.forEach((key, value) {
+      if (key.toLowerCase().contains('contact') || 
+          key.toLowerCase().contains('phone') || 
+          key.toLowerCase().contains('mobile')) {
+        print("Found potential contact field: $key = $value");
+      }
+    });
+
+    // Try ALL possible contact field names with normalized values
+    final contactFieldNames = [
+      'contactNumber No.', 'contactNumber', 'contactNumberNo.', 'contactNo', 'contactNo.',
+      'phoneNumber', 'phone', 'PhoneNumber', 'Phone',
+      'mobileNumber', 'mobile', 'Mobile', 'MobileNumber',
+      'contact', 'Contact', 'contactInfo', 'number', 'Number'
+    ];
+
+    // Check through ALL possible field names
+    for (String fieldName in contactFieldNames) {
+      if (patientData.containsKey(fieldName) && 
+          patientData[fieldName] != null && 
+          patientData[fieldName].toString().isNotEmpty) {
+        patientContact = patientData[fieldName].toString();
+        print("Found contact in field '$fieldName': $patientContact");
+        break; // Stop once we find a valid contact
+      }
+    }
+
+    // If still no contact found, check in nested objects
+    if (patientContact.isEmpty) {
+      // Check for contactInfo object
+      if (patientData['contactInfo'] is Map) {
+        Map<String, dynamic> contactInfo = patientData['contactInfo'] as Map<String, dynamic>;
+        print("Found contactInfo object: $contactInfo");
+        for (String fieldName in ['phone', 'phoneNumber', 'mobile', 'number', 'contact']) {
+          if (contactInfo.containsKey(fieldName) && 
+              contactInfo[fieldName] != null && 
+              contactInfo[fieldName].toString().isNotEmpty) {
+            patientContact = contactInfo[fieldName].toString();
+            print("Found contact in nested contactInfo.$fieldName: $patientContact");
+            break;
+          }
+        }
+      }
+
+      // Check other possible nested objects
+      final possibleNestedObjects = ['contact', 'phone', 'info', 'details', 'profile'];
+      for (String objName in possibleNestedObjects) {
+        if (patientData[objName] is Map) {
+          Map<String, dynamic> nestedObj = patientData[objName] as Map<String, dynamic>;
+          print("Found nested object '$objName': $nestedObj");
+          for (String fieldName in ['phone', 'phoneNumber', 'mobile', 'number', 'contact']) {
+            if (nestedObj.containsKey(fieldName) && 
+                nestedObj[fieldName] != null && 
+                nestedObj[fieldName].toString().isNotEmpty) {
+              patientContact = nestedObj[fieldName].toString();
+              print("Found contact in nested $objName.$fieldName: $patientContact");
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Look in raw appointment data as a last resort
+    if (patientContact.isEmpty && appointmentData.containsKey("rawData")) {
+      Map<String, dynamic> rawData = appointmentData["rawData"] as Map<String, dynamic>;
+      print("Checking raw appointment data for contact: $rawData");
+      for (String fieldName in contactFieldNames) {
+        if (rawData.containsKey(fieldName) && 
+            rawData[fieldName] != null && 
+            rawData[fieldName].toString().isNotEmpty) {
+          patientContact = rawData[fieldName].toString();
+          print("Found contact in raw appointment data $fieldName: $patientContact");
+          break;
+        }
+      }
+    }
+
+    // Final normalization and validation of phone number
+    if (patientContact.isNotEmpty) {
+      // Remove any non-digit characters if needed
+      if (patientContact.contains(RegExp(r'[^0-9+\-() ]'))) {
+        patientContact = patientContact.replaceAll(RegExp(r'[^0-9+\-() ]'), '');
+      }
+
+      // Check if it's still valid
+      if (patientContact.isEmpty) {
+        patientContact = "Unknown";
+      }
+    } else {
+      patientContact = "Unknown";
+    }
+
+    // Update values in appointmentData
+    print("Final patient info - Name: $patientName, Contact: $patientContact");
     appointmentData["name"] = patientName;
     appointmentData["contact"] = patientContact;
-    
+
     // Extract and add additional patient information
     appointmentData["patientData"] = {};
-    
-    // Age/birthdate information
     if (patientData['age'] != null) {
       appointmentData["patientData"]["age"] = patientData['age'];
     }
-    
     if (patientData['dateOfBirth'] != null || patientData['dob'] != null) {
       appointmentData["patientData"]["dob"] = patientData['dateOfBirth'] ?? patientData['dob'];
     }
-    
-    // Gender information
     if (patientData['gender'] != null) {
       appointmentData["patientData"]["gender"] = patientData['gender'];
     }
-    
-    // Address information
-    String address = (patientData['address'] ?? 
-                    patientData['Address'] ?? '').toString();
-                    
+
+    String address = (patientData['address'] ?? patientData['Address'] ?? '').toString();
     if (address.isNotEmpty) {
       appointmentData["patientData"]["address"] = address;
     }
-    
-    // Any available medical information
     if (patientData['bloodGroup'] != null) {
       appointmentData["patientData"]["bloodGroup"] = patientData['bloodGroup'];
     }
-    
     if (patientData['allergies'] != null) {
       appointmentData["patientData"]["allergies"] = patientData['allergies'];
     }
-    
     if (patientData['medicalHistory'] != null) {
       appointmentData["patientData"]["medicalHistory"] = patientData['medicalHistory'];
     }
-    
-    // Secondary contact information
     if (patientData['emergencyContact'] != null) {
       appointmentData["patientData"]["emergencyContact"] = patientData['emergencyContact'];
     }
-    
     if (patientData['email'] != null && appointmentData["patientEmail"] == '') {
       appointmentData["patientEmail"] = patientData['email'];
     }
   }
-
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -1435,9 +1583,9 @@ class DoctorProfileScreen extends StatefulWidget {
 }
 
 class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
-  String currentAvailability = "9:00am - 12:00pm";
-  String availabilityDay1 = "10:00am - 1:00pm";
-  String availabilityDay2 = "4:00pm - 7:00pm";
+  String currentAvailability = "";
+  String tomorrowAvailability = "";
+  String dayAfterTomorrowAvailability = "";
   String clinicAddress = "";
   String doctorName = "";
   String doctorSpecialization = "General";
@@ -1466,7 +1614,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
   void initState() {
     super.initState();
     _loadDoctorProfile();
-    _loadSavedData();
   }
   
   @override
@@ -1500,9 +1647,12 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
             doctorPhone = doctorData['contactNo'] ?? doctorData['phone'] ?? '';
             doctorExperience = doctorData['experience'] ?? '';
             doctorQualification = doctorData['qualification'] ?? '';
-            currentAvailability = doctorData['Current Availaibility'] ?? currentAvailability;
-            availabilityDay1 = doctorData['Tommorows Availaibility'] ?? availabilityDay1;
-            availabilityDay2 = doctorData['Day After Tommorows Availaibility'] ?? availabilityDay2;
+            
+            // Get availability data with correct field names to match registration screen
+            currentAvailability = doctorData['Current Availaibility'] ?? 'Not Set';
+            tomorrowAvailability = doctorData['Tommorows Availaibility'] ?? 'Not Set';
+            dayAfterTomorrowAvailability = doctorData['Day After Tommorows Availaibility'] ?? 'Not Set';
+            
             profileImageUrl = doctorData['profile_picture'];
             isBookingEnabled = doctorData['booking_enabled'] ?? true;
           });
@@ -1520,6 +1670,9 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       _addressController.text = clinicAddress;
       _qualificationController.text = doctorQualification;
       _experienceController.text = doctorExperience;
+      
+      // Update availability - check if we need to shift days
+      _updateAvailabilityDaily();
     } catch (e) {
       print("Error loading doctor profile: $e");
       // Fallback to provided data
@@ -1541,33 +1694,15 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       doctorPhone = widget.doctorData['contactNo'] ?? widget.doctorData['phone'] ?? '';
       doctorExperience = widget.doctorData['experience'] ?? '';
       doctorQualification = widget.doctorData['qualification'] ?? '';
-      currentAvailability = widget.doctorData['Current Availaibility'] ?? currentAvailability;
-      availabilityDay1 = widget.doctorData['Tommorows Availaibility'] ?? availabilityDay1;
-      availabilityDay2 = widget.doctorData['Day After Tommorows Availaibility'] ?? availabilityDay2;
+      
+      // Get availability that was set during registration - use exact field names from registration
+      currentAvailability = widget.doctorData['Current Availaibility'] ?? 'Not Set';
+      tomorrowAvailability = widget.doctorData['Tommorows Availaibility'] ?? 'Not Set';
+      dayAfterTomorrowAvailability = widget.doctorData['Day After Tommorows Availaibility'] ?? 'Not Set';
+      
       profileImageUrl = widget.doctorData['profile_picture'];
       isBookingEnabled = widget.doctorData['booking_enabled'] ?? true;
     });
-  }
-
-  Future<void> _loadSavedData() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    setState(() {
-      currentAvailability = prefs.getString('currentAvailability') ?? currentAvailability;
-      availabilityDay1 = prefs.getString('availabilityDay1') ?? availabilityDay1;
-      availabilityDay2 = prefs.getString('availabilityDay2') ?? availabilityDay2;
-      clinicAddress = prefs.getString('clinicAddress') ?? clinicAddress;
-      doctorSpecialization = prefs.getString('doctorSpecialization') ?? doctorSpecialization;
-      doctorQualification = prefs.getString('doctorQualification') ?? doctorQualification;
-      doctorExperience = prefs.getString('doctorExperience') ?? doctorExperience;
-      isBookingEnabled = prefs.getBool('isBookingEnabled') ?? true;
-      
-      // Update controllers with loaded data
-      _specializationController.text = doctorSpecialization;
-      _addressController.text = clinicAddress;
-      _qualificationController.text = doctorQualification;
-      _experienceController.text = doctorExperience;
-    });
-    _updateAvailabilityDaily();
   }
 
   Future<void> _updateAvailabilityDaily() async {
@@ -1577,28 +1712,25 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     
     if (lastUpdate != todayDate) {
       setState(() {
-        currentAvailability = availabilityDay1;
-        availabilityDay1 = availabilityDay2;
-        availabilityDay2 = "Not Set";
+        currentAvailability = tomorrowAvailability;
+        tomorrowAvailability = dayAfterTomorrowAvailability;
+        dayAfterTomorrowAvailability = "Not Set";
       });
       
-      // Update in Firestore
+      // Update in Firestore using field names that match registration screen
       if (widget.doctorId.isNotEmpty) {
         try {
           await _firestore.collection('doctors').doc(widget.doctorId).update({
             'Current Availaibility': currentAvailability,
-            'Tommorows Availaibility': availabilityDay1,
-            'Day After Tommorows Availaibility': availabilityDay2,
+            'Tommorows Availaibility': tomorrowAvailability,
+            'Day After Tommorows Availaibility': dayAfterTomorrowAvailability,
           });
         } catch (e) {
           print("Error updating availability in Firestore: $e");
         }
       }
       
-      // Update in SharedPreferences
-      prefs.setString('currentAvailability', currentAvailability);
-      prefs.setString('availabilityDay1', availabilityDay1);
-      prefs.setString('availabilityDay2', availabilityDay2);
+      // Update last update date in SharedPreferences
       prefs.setString('lastUpdate', todayDate);
     }
   }
@@ -1615,33 +1747,38 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
       );
       if (pickedEndTime != null) {
         setState(() {
-          String formattedStartTime = pickedStartTime.format(context);
-          String formattedEndTime = pickedEndTime.format(context);
+          String formattedStartTime = _formatTimeOfDay(pickedStartTime);
+          String formattedEndTime = _formatTimeOfDay(pickedEndTime);
+          String availabilityString = "$formattedStartTime - $formattedEndTime";
+          
           if (day == 1) {
-            availabilityDay1 = "$formattedStartTime - $formattedEndTime";
+            tomorrowAvailability = availabilityString;
           } else {
-            availabilityDay2 = "$formattedStartTime - $formattedEndTime";
+            dayAfterTomorrowAvailability = availabilityString;
           }
         });
         
-        // Update in Firestore
+        // Update in Firestore with field names matching registration screen
         if (widget.doctorId.isNotEmpty) {
           try {
             await _firestore.collection('doctors').doc(widget.doctorId).update({
               day == 1 ? 'Tommorows Availaibility' : 'Day After Tommorows Availaibility': 
-                day == 1 ? availabilityDay1 : availabilityDay2,
+                day == 1 ? tomorrowAvailability : dayAfterTomorrowAvailability,
             });
           } catch (e) {
             print("Error updating availability in Firestore: $e");
           }
         }
-        
-        // Update in SharedPreferences
-        SharedPreferences prefs = await SharedPreferences.getInstance();
-        prefs.setString(day == 1 ? 'availabilityDay1' : 'availabilityDay2', 
-                      day == 1 ? availabilityDay1 : availabilityDay2);
       }
     }
+  }
+
+  // Format TimeOfDay in same format as used in registration screen
+  String _formatTimeOfDay(TimeOfDay tod) {
+    final hours = tod.hourOfPeriod == 0 ? 12 : tod.hourOfPeriod;
+    final minutes = tod.minute.toString().padLeft(2, '0');
+    final period = tod.period == DayPeriod.am ? 'AM' : 'PM';
+    return "$hours:$minutes $period";
   }
 
   void _updateAddress() {
@@ -1672,10 +1809,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                   print("Error updating clinic address in Firestore: $e");
                 }
               }
-              
-              // Update in SharedPreferences
-              SharedPreferences prefs = await SharedPreferences.getInstance();
-              prefs.setString('clinicAddress', clinicAddress);
               Navigator.pop(context);
             },
             child: Text("Save"),
@@ -1713,10 +1846,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                   print("Error updating specialization in Firestore: $e");
                 }
               }
-              
-              // Update in SharedPreferences
-              SharedPreferences prefs = await SharedPreferences.getInstance();
-              prefs.setString('doctorSpecialization', doctorSpecialization);
               Navigator.pop(context);
             },
             child: Text("Save"),
@@ -1754,10 +1883,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                   print("Error updating qualification in Firestore: $e");
                 }
               }
-              
-              // Update in SharedPreferences
-              SharedPreferences prefs = await SharedPreferences.getInstance();
-              prefs.setString('doctorQualification', doctorQualification);
               Navigator.pop(context);
             },
             child: Text("Save"),
@@ -1796,10 +1921,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                   print("Error updating experience in Firestore: $e");
                 }
               }
-              
-              // Update in SharedPreferences
-              SharedPreferences prefs = await SharedPreferences.getInstance();
-              prefs.setString('doctorExperience', doctorExperience);
               Navigator.pop(context);
             },
             child: Text("Save"),
@@ -1809,7 +1930,7 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     );
   }
 
-  // Improved image picking and upload
+  // Image picking and upload
   Future<void> _pickImage() async {
     showModalBottomSheet(
       context: context,
@@ -2175,11 +2296,6 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
                   ),
                 ),
               ),
-              
-              SizedBox(height: 20),
-              
-              // Update Buttons Section
-              _buildUpdateButtonsSection(),
             ],
           ),
         ),
@@ -2257,8 +2373,8 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
             Divider(color: Colors.teal),
             SizedBox(height: 10),
             _buildAvailabilityItem("Today", currentAvailability),
-            _buildAvailabilityItem("Tomorrow", availabilityDay1, canEdit: true, onTap: () => _updateAvailability(1)),
-            _buildAvailabilityItem("Day After Tomorrow", availabilityDay2, canEdit: true, onTap: () => _updateAvailability(2)),
+            _buildAvailabilityItem("Tomorrow", tomorrowAvailability, canEdit: true, onTap: () => _updateAvailability(1)),
+            _buildAvailabilityItem("Day After Tomorrow", dayAfterTomorrowAvailability, canEdit: true, onTap: () => _updateAvailability(2)),
           ],
         ),
       ),
@@ -2293,85 +2409,7 @@ class _DoctorProfileScreenState extends State<DoctorProfileScreen> {
     );
   }
   
-  Widget _buildUpdateButtonsSection() {
-    return Column(
-      children: [
-        ElevatedButton.icon(
-          icon: Icon(Icons.photo),
-          label: Text("Update Profile Photo"),
-          onPressed: isUploadingImage ? null : _pickImage,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 45),
-            disabledBackgroundColor: Colors.grey,
-          ),
-        ),
-        SizedBox(height: 15),
-        ElevatedButton(
-          onPressed: _updateSpecialization,
-          child: Text("Update Specialization"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 40),
-          ),
-        ),
-        SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: _updateQualification,
-          child: Text("Update Qualification"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 40),
-          ),
-        ),
-        SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: _updateExperience,
-          child: Text("Update Experience"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 40),
-          ),
-        ),
-        SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: _updateAddress,
-          child: Text("Update Clinic Address"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 40),
-          ),
-        ),
-        SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: () => _updateAvailability(1),
-          child: Text("Update Tomorrow's Availability"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 40),
-          ),
-        ),
-        SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: () => _updateAvailability(2),
-          child: Text("Update Day After Tomorrow's Availability"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal,
-            foregroundColor: Colors.white,
-            minimumSize: Size(double.infinity, 40),
-          ),
-        ),
-      ],
-    );
-  }
-  
-  // Improved profile image widget with error handling and loading
+  // Profile image widget with error handling and loading
   Widget _getProfileImageWidget() {
     if (_profileImage != null) {
       return Image.file(

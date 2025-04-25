@@ -3,10 +3,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'config/firebase_options.dart';
 import '../screens/auth/doctor_signup_screen.dart';
 import 'screens/auth/patient_signup_screen.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
+  await dotenv.load(fileName: ".env");
+
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
   runApp(AppointmentApp());
 }
 
